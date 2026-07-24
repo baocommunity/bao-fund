@@ -1,0 +1,645 @@
+/**
+ * PetsDevEditor - DEV MODE ONLY
+ * 
+ * A comprehensive editor for directly modifying Pets state during development.
+ * Allows testing stage transitions, stat changes, adult forms, and other properties
+ * without going through the normal game flow.
+ * 
+ * IMPORTANT: This component should only be rendered in development mode.
+ */
+
+import { useState, useCallback, useMemo } from 'react';
+import { Egg, Baby, Sparkles, Loader2, RotateCcw, Zap, Heart, Utensils, Droplets, Activity, Battery, Moon, Sun } from 'lucide-react';
+
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Slider } from '@/components/ui/slider';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Separator } from '@/components/ui/separator';
+import { Badge } from '@/components/ui/badge';
+import { Switch } from '@/components/ui/switch';
+import { Input } from '@/components/ui/input';
+import { cn } from '@/lib/utils';
+
+import type { PetsCompanion, PetsStage, PetsState, PetsStats } from '@/pets/core/lib/pets';
+import { ADULT_FORMS } from '@/pets/adult-pets/types/adult.types';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+interface PetsDevEditorProps {
+  /** Whether the editor modal is open */
+  isOpen: boolean;
+  /** Callback to close the modal */
+  onClose: () => void;
+  /** The current Pets companion to edit */
+  companion: PetsCompanion;
+  /** Callback when changes should be applied */
+  onApply: (updates: PetsDevUpdates) => Promise<void>;
+  /** Whether an update is in progress */
+  isUpdating?: boolean;
+  /** DEV: Reset account-level daily missions and trigger persist */
+  onResetDailyMissions?: () => void;
+}
+
+/** Updates that can be applied to a Pets */
+export interface PetsDevUpdates {
+  /** Stage transition */
+  stage?: PetsStage;
+  /** State change (active, sleeping, etc.) */
+  state?: PetsState;
+  /** Adult form type (only for adults) */
+  adultType?: string;
+  /** Stats updates */
+  stats?: Partial<PetsStats>;
+  /** Care streak */
+  careStreak?: number;
+  /** Breeding ready flag */
+  breedingReady?: boolean;
+  /** Generation number */
+  generation?: number;
+  /** Egg visual scale multiplier */
+  eggScale?: number;
+}
+
+// ─── Stat Presets ─────────────────────────────────────────────────────────────
+
+interface StatPreset {
+  name: string;
+  description: string;
+  stats: Partial<PetsStats>;
+  variant: 'default' | 'destructive' | 'outline' | 'secondary';
+}
+
+const STAT_PRESETS: StatPreset[] = [
+  {
+    name: 'Max Stats',
+    description: 'All stats at 100',
+    stats: { hunger: 100, happiness: 100, health: 100, hygiene: 100, energy: 100 },
+    variant: 'default',
+  },
+  {
+    name: 'Starving',
+    description: 'Hunger at 5',
+    stats: { hunger: 5 },
+    variant: 'destructive',
+  },
+  {
+    name: 'Exhausted',
+    description: 'Energy at 5',
+    stats: { energy: 5 },
+    variant: 'destructive',
+  },
+  {
+    name: 'Dirty',
+    description: 'Hygiene at 10',
+    stats: { hygiene: 10 },
+    variant: 'outline',
+  },
+  {
+    name: 'Sad',
+    description: 'Happiness at 15',
+    stats: { happiness: 15 },
+    variant: 'outline',
+  },
+  {
+    name: 'Critical Health',
+    description: 'Health at 10',
+    stats: { health: 10 },
+    variant: 'destructive',
+  },
+  {
+    name: 'All Low',
+    description: 'All stats at 20',
+    stats: { hunger: 20, happiness: 20, health: 20, hygiene: 20, energy: 20 },
+    variant: 'destructive',
+  },
+  {
+    name: 'Half Stats',
+    description: 'All stats at 50',
+    stats: { hunger: 50, happiness: 50, health: 50, hygiene: 50, energy: 50 },
+    variant: 'secondary',
+  },
+];
+
+// ─── Stat Editor Component ────────────────────────────────────────────────────
+
+interface StatSliderProps {
+  label: string;
+  icon: React.ReactNode;
+  value: number;
+  onChange: (value: number) => void;
+  color: string;
+}
+
+function StatSlider({ label, icon, value, onChange, color }: StatSliderProps) {
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <span className={cn('size-4', color)}>{icon}</span>
+          <Label className="text-sm font-medium">{label}</Label>
+        </div>
+        <div className="flex items-center gap-2">
+          <Input
+            type="number"
+            min={0}
+            max={100}
+            value={value}
+            onChange={(e) => onChange(Math.min(100, Math.max(0, parseInt(e.target.value, 10) || 0)))}
+            className="w-16 h-7 text-sm text-center"
+          />
+          <span className="text-xs text-muted-foreground w-6">%</span>
+        </div>
+      </div>
+      <Slider
+        value={[value]}
+        min={0}
+        max={100}
+        step={1}
+        onValueChange={([v]) => onChange(v)}
+        className="w-full"
+      />
+    </div>
+  );
+}
+
+// ─── Main Component ───────────────────────────────────────────────────────────
+
+export function PetsDevEditor({
+  isOpen,
+  onClose,
+  companion,
+  onApply,
+  isUpdating = false,
+  onResetDailyMissions,
+}: PetsDevEditorProps) {
+  // ─── Local State ───
+  // Initialize from companion values
+  const [stage, setStage] = useState<PetsStage>(companion.stage);
+  const [state, setState] = useState<PetsState>(companion.state);
+  const [adultType, setAdultType] = useState<string>(companion.adultType ?? 'catti');
+  const [stats, setStats] = useState<PetsStats>({
+    hunger: companion.stats.hunger ?? 100,
+    happiness: companion.stats.happiness ?? 100,
+    health: companion.stats.health ?? 100,
+    hygiene: companion.stats.hygiene ?? 100,
+    energy: companion.stats.energy ?? 100,
+  });
+  const [careStreak, setCareStreak] = useState(companion.careStreak ?? 0);
+  const [breedingReady, setBreedingReady] = useState(companion.breedingReady);
+  const [generation, setGeneration] = useState(companion.generation ?? 1);
+  const [eggScale, setEggScale] = useState(companion.eggScale ?? 1);
+
+  // Daily-missions reset confirmation state
+  const [confirmResetMissions, setConfirmResetMissions] = useState(false);
+
+  // Reset state when companion changes or modal opens
+  const resetToCompanion = useCallback(() => {
+    setStage(companion.stage);
+    setState(companion.state);
+    setAdultType(companion.adultType ?? 'catti');
+    setStats({
+      hunger: companion.stats.hunger ?? 100,
+      happiness: companion.stats.happiness ?? 100,
+      health: companion.stats.health ?? 100,
+      hygiene: companion.stats.hygiene ?? 100,
+      energy: companion.stats.energy ?? 100,
+    });
+    setCareStreak(companion.careStreak ?? 0);
+    setBreedingReady(companion.breedingReady);
+    setGeneration(companion.generation ?? 1);
+    setEggScale(companion.eggScale ?? 1);
+  }, [companion]);
+
+  // Check if there are any changes
+  const hasChanges = useMemo(() => {
+    return (
+      stage !== companion.stage ||
+      state !== companion.state ||
+      (stage === 'adult' && adultType !== (companion.adultType ?? 'catti')) ||
+      stats.hunger !== (companion.stats.hunger ?? 100) ||
+      stats.happiness !== (companion.stats.happiness ?? 100) ||
+      stats.health !== (companion.stats.health ?? 100) ||
+      stats.hygiene !== (companion.stats.hygiene ?? 100) ||
+      stats.energy !== (companion.stats.energy ?? 100) ||
+      careStreak !== (companion.careStreak ?? 0) ||
+      breedingReady !== companion.breedingReady ||
+      generation !== (companion.generation ?? 1) ||
+      eggScale !== (companion.eggScale ?? 1)
+    );
+  }, [stage, state, adultType, stats, careStreak, breedingReady, generation, eggScale, companion]);
+
+  // Apply preset
+  const applyPreset = useCallback((preset: StatPreset) => {
+    setStats(prev => ({ ...prev, ...preset.stats }));
+  }, []);
+
+  // Update single stat
+  const updateStat = useCallback((key: keyof PetsStats, value: number) => {
+    setStats(prev => ({ ...prev, [key]: value }));
+  }, []);
+
+  // Handle apply
+  const handleApply = useCallback(async () => {
+    const updates: PetsDevUpdates = {};
+
+    // Only include changed values
+    if (stage !== companion.stage) {
+      updates.stage = stage;
+    }
+    if (state !== companion.state) {
+      updates.state = state;
+    }
+    if (stage === 'adult' && adultType !== (companion.adultType ?? 'catti')) {
+      updates.adultType = adultType;
+    }
+
+    // Stats - check each individually
+    const statsUpdates: Partial<PetsStats> = {};
+    if (stats.hunger !== (companion.stats.hunger ?? 100)) statsUpdates.hunger = stats.hunger;
+    if (stats.happiness !== (companion.stats.happiness ?? 100)) statsUpdates.happiness = stats.happiness;
+    if (stats.health !== (companion.stats.health ?? 100)) statsUpdates.health = stats.health;
+    if (stats.hygiene !== (companion.stats.hygiene ?? 100)) statsUpdates.hygiene = stats.hygiene;
+    if (stats.energy !== (companion.stats.energy ?? 100)) statsUpdates.energy = stats.energy;
+    if (Object.keys(statsUpdates).length > 0) {
+      updates.stats = statsUpdates;
+    }
+
+    // Other fields
+    if (careStreak !== (companion.careStreak ?? 0)) updates.careStreak = careStreak;
+    if (breedingReady !== companion.breedingReady) updates.breedingReady = breedingReady;
+    if (generation !== (companion.generation ?? 1)) updates.generation = generation;
+    if (eggScale !== (companion.eggScale ?? 1)) updates.eggScale = eggScale;
+
+    await onApply(updates);
+    onClose();
+  }, [stage, state, adultType, stats, careStreak, breedingReady, generation, eggScale, companion, onApply, onClose]);
+
+  // Handle close
+  const handleClose = useCallback(() => {
+    resetToCompanion();
+    onClose();
+  }, [resetToCompanion, onClose]);
+
+  // Self-gate: this component must never render outside a Vite dev build.
+  if (!import.meta.env.DEV) {
+    console.error('PetsDevEditor is only available in development mode');
+    return null;
+  }
+
+  return (
+    <Dialog open={isOpen} onOpenChange={(open) => !open && handleClose()}>
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <span className="text-amber-500">DEV</span>
+            <span>Pets State Editor</span>
+            <Badge variant="outline" className="ml-2 text-xs">
+              {companion.name}
+            </Badge>
+          </DialogTitle>
+          <DialogDescription>
+            Directly edit Pets state for testing. Changes are published to the network.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="space-y-6 py-4">
+          {/* ─── Stage Controls ─── */}
+          <div className="space-y-3">
+            <Label className="text-sm font-semibold">Stage / Evolution</Label>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant={stage === 'egg' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setStage('egg')}
+                className="gap-2"
+              >
+                <Egg className="size-4" />
+                Egg
+              </Button>
+              <Button
+                variant={stage === 'baby' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setStage('baby')}
+                className="gap-2"
+              >
+                <Baby className="size-4" />
+                Baby
+              </Button>
+              <Button
+                variant={stage === 'adult' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setStage('adult')}
+                className="gap-2"
+              >
+                <Sparkles className="size-4" />
+                Adult
+              </Button>
+            </div>
+            {stage !== companion.stage && (
+              <p className="text-xs text-amber-500">
+                Stage will change from {companion.stage} to {stage}
+              </p>
+            )}
+          </div>
+
+          {/* ─── Seed (read-only) ─── */}
+          {companion.seed && (
+            <div className="space-y-2">
+              <Label className="text-sm font-semibold">Seed</Label>
+              <code className="block text-[10px] font-mono text-muted-foreground bg-muted rounded px-2 py-1.5 break-all select-all">
+                {companion.seed}
+              </code>
+              <p className="text-[10px] text-muted-foreground">
+                Read-only. The seed determines colors, pattern, size, and adult form.
+              </p>
+            </div>
+          )}
+
+          {/* ─── Adult Form (only shown for adults) ─── */}
+          {stage === 'adult' && (
+            <div className="space-y-3">
+              <Label className="text-sm font-semibold">Adult Form</Label>
+              <Select value={adultType} onValueChange={setAdultType}>
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Select form" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ADULT_FORMS.map((form) => (
+                    <SelectItem key={form} value={form} className="capitalize">
+                      {form}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {companion.seed && adultType !== (companion.adultType ?? 'catti') && (
+                <p className="text-xs text-amber-500">
+                  Changing the form will adjust the seed. Colors and other visual traits will be re-derived.
+                </p>
+              )}
+            </div>
+          )}
+
+          <Separator />
+
+          {/* ─── State Controls ─── */}
+          <div className="space-y-3">
+            <Label className="text-sm font-semibold">Activity State</Label>
+            <Select value={state} onValueChange={(v) => setState(v as PetsState)}>
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="active">
+                  <div className="flex items-center gap-2">
+                    <Sun className="size-4" />
+                    Active (Awake)
+                  </div>
+                </SelectItem>
+                <SelectItem value="sleeping">
+                  <div className="flex items-center gap-2">
+                    <Moon className="size-4" />
+                    Sleeping
+                  </div>
+                </SelectItem>
+                <SelectItem value="hibernating">
+                  <div className="flex items-center gap-2">
+                    <Moon className="size-4 opacity-50" />
+                    Hibernating
+                  </div>
+                </SelectItem>
+                <SelectItem value="incubating">
+                  <div className="flex items-center gap-2">
+                    <Egg className="size-4" />
+                    Incubating
+                  </div>
+                </SelectItem>
+                <SelectItem value="evolving">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="size-4" />
+                    Evolving
+                  </div>
+                </SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <Separator />
+
+          {/* ─── Stats Section ─── */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <Label className="text-sm font-semibold">Stats</Label>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setStats({
+                  hunger: companion.stats.hunger ?? 100,
+                  happiness: companion.stats.happiness ?? 100,
+                  health: companion.stats.health ?? 100,
+                  hygiene: companion.stats.hygiene ?? 100,
+                  energy: companion.stats.energy ?? 100,
+                })}
+                className="h-7 text-xs"
+              >
+                <RotateCcw className="size-3 mr-1" />
+                Reset Stats
+              </Button>
+            </div>
+
+            {/* Stat Presets */}
+            <div className="flex flex-wrap gap-2">
+              {STAT_PRESETS.map((preset) => (
+                <Button
+                  key={preset.name}
+                  variant={preset.variant}
+                  size="sm"
+                  onClick={() => applyPreset(preset)}
+                  className="h-7 text-xs"
+                  title={preset.description}
+                >
+                  {preset.name}
+                </Button>
+              ))}
+            </div>
+
+            {/* Stat Sliders */}
+            <div className="space-y-4 pt-2">
+              <StatSlider
+                label="Hunger"
+                icon={<Utensils className="size-4" />}
+                value={stats.hunger}
+                onChange={(v) => updateStat('hunger', v)}
+                color="text-orange-500"
+              />
+              <StatSlider
+                label="Happiness"
+                icon={<Heart className="size-4" />}
+                value={stats.happiness}
+                onChange={(v) => updateStat('happiness', v)}
+                color="text-pink-500"
+              />
+              <StatSlider
+                label="Health"
+                icon={<Activity className="size-4" />}
+                value={stats.health}
+                onChange={(v) => updateStat('health', v)}
+                color="text-red-500"
+              />
+              <StatSlider
+                label="Hygiene"
+                icon={<Droplets className="size-4" />}
+                value={stats.hygiene}
+                onChange={(v) => updateStat('hygiene', v)}
+                color="text-blue-500"
+              />
+              <StatSlider
+                label="Energy"
+                icon={<Battery className="size-4" />}
+                value={stats.energy}
+                onChange={(v) => updateStat('energy', v)}
+                color="text-yellow-500"
+              />
+            </div>
+          </div>
+
+          <Separator />
+
+          {/* ─── Other Properties ─── */}
+          <div className="space-y-4">
+            <Label className="text-sm font-semibold">Other Properties</Label>
+
+            <div className="grid grid-cols-2 gap-4">
+              {/* Care Streak */}
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Care Streak (days)</Label>
+                <Input
+                  type="number"
+                  min={0}
+                  value={careStreak}
+                  onChange={(e) => setCareStreak(Math.max(0, parseInt(e.target.value, 10) || 0))}
+                  className="h-8"
+                />
+              </div>
+
+              {/* Generation */}
+              <div className="space-y-2">
+                <Label className="text-xs text-muted-foreground">Generation</Label>
+                <Input
+                  type="number"
+                  min={1}
+                  value={generation}
+                  onChange={(e) => setGeneration(Math.max(1, parseInt(e.target.value, 10) || 1))}
+                  className="h-8"
+                />
+              </div>
+            </div>
+
+            {/* Egg Scale */}
+            <div className="space-y-2 pt-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs text-muted-foreground">Egg Scale</Label>
+                <Input
+                  type="number"
+                  min={0.25}
+                  max={3}
+                  step={0.05}
+                  value={eggScale.toFixed(2)}
+                  onChange={(e) => {
+                    const value = parseFloat(e.target.value);
+                    setEggScale(Number.isFinite(value) ? Math.min(3, Math.max(0.25, value)) : 1);
+                  }}
+                  className="w-20 h-7 text-sm text-center"
+                />
+              </div>
+              <Slider
+                value={[eggScale]}
+                min={0.25}
+                max={3}
+                step={0.05}
+                onValueChange={([v]) => setEggScale(v)}
+              />
+            </div>
+
+            {/* Boolean Flags */}
+            <div className="flex flex-col gap-3 pt-2">
+              <div className="flex items-center justify-between">
+                <Label className="text-sm">Breeding Ready</Label>
+                <Switch
+                  checked={breedingReady}
+                  onCheckedChange={setBreedingReady}
+                />
+              </div>
+             </div>
+          </div>
+
+
+        </div>
+
+        {/* Daily Missions Reset */}
+        {onResetDailyMissions && (
+          <>
+            <Separator />
+            <div className="flex items-center justify-between">
+              <div>
+                <Label className="text-sm font-medium">Daily Missions</Label>
+                <p className="text-xs text-muted-foreground">Reset account-level daily bounties</p>
+              </div>
+              <Button
+                variant={confirmResetMissions ? 'destructive' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  if (!confirmResetMissions) {
+                    setConfirmResetMissions(true);
+                    return;
+                  }
+                  setConfirmResetMissions(false);
+                  onResetDailyMissions();
+                }}
+              >
+                <RotateCcw className="size-3 mr-1.5" />
+                {confirmResetMissions ? 'Confirm Reset' : 'Reset Daily Missions'}
+              </Button>
+            </div>
+          </>
+        )}
+
+        <DialogFooter className="flex-col sm:flex-row gap-2">
+          <Button
+            variant="outline"
+            onClick={handleClose}
+            disabled={isUpdating}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="outline"
+            onClick={resetToCompanion}
+            disabled={isUpdating || !hasChanges}
+          >
+            <RotateCcw className="size-4 mr-2" />
+            Reset
+          </Button>
+          <Button
+            onClick={handleApply}
+            disabled={isUpdating || !hasChanges}
+            className="bg-amber-500 hover:bg-amber-600 text-white"
+          >
+            {isUpdating ? (
+              <>
+                <Loader2 className="size-4 mr-2 animate-spin" />
+                Applying...
+              </>
+            ) : (
+              <>
+                <Zap className="size-4 mr-2" />
+                Apply Changes
+              </>
+            )}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}

@@ -1,0 +1,85 @@
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+.eslintcache
+.tsbuildinfo
+yarn.lock
+deploy.sh
+
+# Editor directories and files
+.idea
+.DS_Store
+.project
+.classpath
+.settings/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Vercel
+.vercel
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Build-time configuration
+app.json
+
+# Agent memory / local-only workspace
+.claude/
+.kimi/
+
+# Android build outputs and sensitive files
+*.aab
+resources/
+android/app/my-upload-key.keystore
+android/key.properties
+android/local.properties
+android/build/
+android/.gradle/
+android/*/build/
+android/app/src/main/res/mipmap-hdpi/ic_launcher_foreground.png
+android/downloads/
+
+# Local research assets and build artifacts
+.research/
+.tools/
+*.apk
+*.apk.sha256
+
+# Playwright E2E artifacts
+test-results/
+playwright-report/
+playwright/.cache/
+
+# Local experimental-branch notes
+EXPERIMENTAL_BRANCHES.md
+
+# Claude local settings with credentials
+.claude/settings.local.json
+
+# Local scratch / upstream mirrors
+.tmp/
+
+# Output of scripts/migrate-2140-content.mjs (regenerated locally)
+migrated-events.json
+
+# Escrow operator service
+services/escrow-operator/node_modules/
+services/escrow-operator/dist/
+
+# Grant proposal experiment (local only, not for public repo)
+grant-proposal-experiment/

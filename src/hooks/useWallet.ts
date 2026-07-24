@@ -1,0 +1,55 @@
+import { useCallback, useMemo } from 'react';
+import { useNWC } from '@/hooks/useNWCContext';
+import type { WebLNProvider } from '@webbtc/webln-types';
+
+export interface WalletStatus {
+  hasNWC: boolean;
+  webln: WebLNProvider | null;
+  activeNWC: ReturnType<typeof useNWC>['getActiveConnection'] extends () => infer T ? T : null;
+  preferredMethod: 'nwc' | 'webln' | 'manual';
+}
+
+export function useWallet() {
+  const { connections, getActiveConnection, sendPayment } = useNWC();
+
+  // Get the active connection directly - no memoization to avoid stale state
+  const activeNWC = getActiveConnection();
+
+  // Access WebLN directly from browser global scope
+  const webln = (globalThis as { webln?: WebLNProvider }).webln || null;
+
+  // Calculate status values reactively
+  const hasNWC = useMemo(() => {
+    return connections.length > 0 && connections.some(c => c.isConnected);
+  }, [connections]);
+
+  // Determine preferred payment method
+  const preferredMethod: WalletStatus['preferredMethod'] = activeNWC
+    ? 'nwc'
+    : webln
+    ? 'webln'
+    : 'manual';
+
+  const status: WalletStatus = {
+    hasNWC,
+    webln,
+    activeNWC,
+    preferredMethod,
+  };
+
+  return {
+    ...status,
+    // ── ₿AO chat (Concord V2 port) aliases matching Armada's useWallet shape ──
+    /** The active NWC connection (Armada name: `activeConnection`). */
+    activeConnection: activeNWC,
+    /** Pay a bolt11 invoice over the active NWC connection; resolves with the preimage. */
+    payWithNWC: useCallback(
+      async (invoice: string): Promise<{ preimage: string }> => {
+        const conn = getActiveConnection();
+        if (!conn) throw new Error('No active NWC connection (Settings → Wallet).');
+        return sendPayment(conn, invoice);
+      },
+      [getActiveConnection, sendPayment],
+    ),
+  };
+}

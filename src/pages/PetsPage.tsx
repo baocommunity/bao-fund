@@ -1,0 +1,4434 @@
+import { useState, useCallback, useMemo, useEffect, useRef, type ComponentType } from 'react';
+import { createPortal } from 'react-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { useSeoMeta } from '@unhead/react';
+import { nip19 } from 'nostr-tools';
+import { Egg, Moon, Sun, RefreshCw, Check, Plus, Camera, Footprints, Wrench, Theater, ExternalLink, Utensils, Gamepad2, Sparkles, Pill, Music, Mic, Loader2, Lock, Target, Droplets, Heart, Zap, Refrigerator, ShowerHead, Candy, TowelRack, X, Activity, Users, TrendingUp, Swords, Wallet, ShoppingBag, ArrowLeftRight, Cat, Bitcoin, Palette, Maximize, Minimize, Settings } from 'lucide-react';
+
+import { useCurrentUser } from '@/hooks/useCurrentUser';
+import { useAuthor } from '@/hooks/useAuthor';
+
+import { useProjectedPetsState } from '@/pets/core/hooks/useProjectedPetsState';
+import { usePetsInteractions } from '@/pets/core/hooks/usePetsInteractions';
+import { usePetsActivityHistory } from '@/pets/core/hooks/usePetsActivityHistory';
+import { useCanonicalSync } from '@/pets/core/hooks/useCanonicalSync';
+import { getShopItemById } from '@/pets/shop/lib/pets-shop-items';
+import { timeAgo } from '@/lib/timeAgo';
+import { useAppContext } from '@/hooks/useAppContext';
+import { useNostrPetProfile } from '@/hooks/useNostrPetProfile';
+import { usePetsWallet } from '@/pets/core/hooks/usePetsWallet';
+import type { CashuWalletState, CashuWalletActions } from '@/hooks/useCashuWallet';
+import { useNostrPetProfileNormalization } from '@/hooks/useNostrPetProfileNormalization';
+import { usePetssCollection } from '@/pets/core/hooks/usePetssCollection';
+import { usePetsNostrPublish } from '@/pets/core/hooks/usePetsNostrPublish';
+import { addProfileSats } from '@/pets/core/lib/profile-sats';
+import { useNostr } from '@nostrify/react';
+import type { NostrEvent } from '@nostrify/nostrify';
+import { useLocalStorage } from '@/hooks/useLocalStorage';
+import { usePetsMigration } from '@/pets/core/hooks/usePetsMigration';
+import { fetchFreshPetsEvent } from '@/pets/core/lib/fetchFreshPetsEvent';
+import { toast } from '@/hooks/useToast';
+
+import { LoginArea } from '@/components/auth/LoginArea';
+import { Button } from '@/components/ui/button';
+
+import { Skeleton } from '@/components/ui/skeleton';
+import { Switch } from '@/components/ui/switch';
+import { Dialog, DialogContent } from '@/components/ui/dialog';
+import { Popover, PopoverTrigger, PopoverContent } from '@/components/ui/popover';
+import { SubHeaderBar } from '@/components/SubHeaderBar';
+import { TabButton } from '@/components/TabButton';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { PetsStageVisual } from '@/pets/ui/PetsStageVisual';
+import { PetsHatchingCeremony } from '@/pets/onboarding/components/PetsHatchingCeremony';
+import { PetsEvolveCeremony } from '@/pets/onboarding/components/PetsEvolveCeremony';
+import { PetsPhotoModal } from '@/pets/ui/PetsPhotoModal';
+
+import { usePetsCompanionData } from '@/pets/companion/hooks/usePetsCompanionData';
+import { useLayoutOptions } from '@/contexts/LayoutContext';
+
+import { openUrl } from '@/lib/downloadFile';
+import { cn } from '@/lib/utils';
+import { getProfileUrl } from '@/lib/profileUrl';
+
+import {
+  KIND_PETS_STATE,
+  KIND_NOSTR_PET_PROFILE,
+  updatePetsTags,
+  updateNostrPetProfileTags,
+  statsToTagUpdates,
+  filterMigratedLegacyCompanions,
+  type PetsCompanion,
+  type PetsStats,
+  type NostrPetProfile,
+  type StorageItem,
+  getLocalDayString,
+} from '@/pets/core/lib/pets';
+
+import { applyPetsDecayForCompanion } from '@/pets/core/lib/pets-decay';
+import { getPetsStatDisplayState } from '@/pets/core/lib/pets-segments';
+import { useCurrentBlockHeight, isPetOldEnough, getStoredBirthBlockHeight } from '@/pets/core/lib/pets-life';
+import { useSeedIdentitySync } from '@/pets/core/hooks/useSeedIdentitySync';
+
+import { getLiveShopItems, getOwnedLiveShopItems } from '@/pets/shop/lib/pets-shop-items';
+import { usePetsPurchaseItem } from '@/pets/shop/hooks/usePetsPurchaseItem';
+import { PetsShopDrawer } from '@/pets/shop/components/PetsShopDrawer';
+import { PetsWalletDrawer } from '@/pets/wallet/components/PetsWalletDrawer';
+import { PetFundraisingCard } from '@/pets/fundraising/PetFundraisingCard';
+
+import {
+  PlayMusicModal,
+  InlineMusicPlayer,
+  InlineSingCard,
+  usePetsUseInventoryItem,
+  usePetsHatch,
+  usePetsEvolve,
+  usePetsDirectAction,
+  useStartIncubation,
+  useStopIncubation,
+  useStartEvolution,
+  useStopEvolution,
+  useHatchTasks,
+  useEvolveTasks,
+  createMusicActivity,
+  createSingActivity,
+  createNoActivity,
+  getActionForItem,
+  trackDailyMissionProgress,
+  getStreakTagUpdates,
+   previewStatChangesWithSegments,
+   useDailyMissions,
+   useAwardDailySats,
+   useDailyLoginBonus,
+  useBaoTradeStats,
+  useClaimBaoTradeRewards,
+  calculateBaoReward,
+  getBaoTierLabel,
+   usePersistEvolutionProgress,
+   usePersistDailyProgress,
+   POOP_CLEANUP_REWARD,
+   type InventoryAction,
+  type DirectAction,
+  type InlineActivityState,
+  type SelectedTrack,
+  type PetsReactionState,
+  type StartIncubationMode,
+} from '@/pets/actions';
+import { PetsOnboardingFlow } from '@/pets/onboarding';
+import { BreedCategoryPreviews } from '@/pets/onboarding/components/BreedCategoryPreviews';
+import { usePetsActionsRegistration, type UseItemFunction } from '@/pets/companion/interaction';
+import { getAdultBaseSvg } from '@/pets/adult-pets';
+import { getBaoRecipeById } from '@/pets/adult-pets/lib/bao-recipe';
+import { generateBaoSvg } from '@/pets/adult-pets/lib/bao-svg';
+import {
+  BREED_CATEGORIES,
+  getCategoryMembers,
+  getCustomCategoryMembers,
+  isAdultFormMember,
+  type PetsBreedCategory,
+} from '@/pets/core/lib/pet-categories';
+import { useCustomForms } from '@/pets/three-d/hooks/useCustomForms';
+import { getAllNeeds } from '@/pets/companion/interaction/needDetection';
+import { PetsDevEditor, usePetsDevUpdate, type PetsDevUpdates, PetsEmotionPanel, useEffectiveEmotion, isLocalhostDev } from '@/pets/dev';
+import { useStatusReaction } from '@/pets/ui/hooks/useStatusReaction';
+import { buildSleepingRecipe } from '@/pets/ui/lib/recipe';
+import { playMunchSound } from '@/pets/ui/lib/munchSound';
+import {
+  PetsRoomShell,
+  PetsRoomHero,
+  PetsRoomStage,
+  PetsRoomStatusHud,
+  PetsRoomEditor,
+  PetsRoomEditorTrigger,
+  ItemCarousel,
+  RoomActionButton,
+  ShovelButton,
+  type PetsRoomId,
+  type CarouselEntry,
+  type PoopState,
+  type ShovelDrag,
+  ROOM_META,
+  isValidRoomId,
+  DEFAULT_INITIAL_ROOM,
+  DEFAULT_ROOM_ORDER,
+  OVERFEED_THRESHOLD,
+  OVERFEED_CHANCE,
+} from '@/pets/rooms';
+import { ROOM_BOTTOM_BAR_CLASS } from '@/pets/rooms/lib/room-layout';
+import { type RoomLayout, type RoomLayoutsContent, parseRoomLayoutsContent, getEffectiveRoomLayout } from '@/pets/rooms/lib/room-layout-schema';
+import { parseRoomFurnitureContent, type FurniturePlacement, type RoomFurnitureContent } from '@/pets/rooms/lib/room-furniture-schema';
+import { getEffectiveRoomFurniture } from '@/pets/rooms/lib/room-furniture-effective';
+import { RoomFurnitureEditor, RoomFurnitureEditorTrigger } from '@/pets/rooms/components/RoomFurnitureEditor';
+import { serializeProfileContent } from '@/pets/core/lib/missions';
+import { fetchFreshNostrPetProfile } from '@/pets/core/lib/fetchFreshNostrPetProfile';
+import { buildGuideTarget, getGuideRoomDirection, type GuideTarget } from '@/pets/rooms/lib/stat-guide-config';
+import { getActionEmotion, SEVERITY_THRESHOLDS } from '@/pets/ui/lib/status-reactions';
+import { useInteractionReaction, INVENTORY_TO_REACTION } from '@/pets/ui/hooks/useInteractionReaction';
+import { usePetsDirectInteraction } from '@/pets/ui/hooks/usePetsDirectInteraction';
+import { useFoodDrag, type UseFoodDragReturn } from '@/pets/rooms/hooks/useFoodDrag';
+import type { PetsEmotion } from '@/pets/ui/lib/emotions';
+import type { InteractionReactionState } from '@/pets/ui/hooks/useInteractionReaction';
+
+
+
+/**
+ * Get the localStorage key for the selected Pets.
+ * User-scoped: pets:selected:d:<pubkey>
+ */
+function getSelectedPetsKey(pubkey: string): string {
+  return `pets:selected:d:${pubkey}`;
+}
+
+/** Enable debug logging in development only */
+const DEBUG_PETS = import.meta.env.DEV;
+
+/** Stat keys checked for the companion selector care badge (excludes energy). */
+const CARE_BADGE_STATS = ['hunger', 'happiness', 'hygiene', 'health'] as const;
+
+/**
+ * Check if a companion needs care using the segment display model.
+ *
+ * Shows a care badge when:
+ * - any stat is `urgent`, OR
+ * - two or more stats are `attention`.
+ *
+ * Eggs always return `protected` from the helper, so they never show a badge.
+ */
+function companionNeedsCare(companion: PetsCompanion): boolean {
+  let attentionCount = 0;
+  for (const stat of CARE_BADGE_STATS) {
+    const value = companion.stats[stat] ?? 100;
+    const { careState } = getPetsStatDisplayState({ stage: companion.stage, stat, value });
+    if (careState === 'urgent') return true;
+    if (careState === 'attention') attentionCount++;
+  }
+  return attentionCount >= 2;
+}
+
+
+
+// ─── Page Component ───────────────────────────────────────────────────────────
+
+export function PetsPage() {
+  const { config } = useAppContext();
+  const { user } = useCurrentUser();
+
+  useSeoMeta({
+    title: `NOSTR PETS | ${config.appName}`,
+    description: 'Care for your virtual pet companion on Nostr',
+  });
+
+  if (!user) {
+    return <LoggedOutState />;
+  }
+
+  return <PetsContent />;
+}
+
+// ─── Logged Out State ─────────────────────────────────────────────────────────
+
+function LoggedOutState() {
+  return (
+    <main className="flex flex-col items-center justify-center p-6 gap-6 min-h-[60vh]">
+      <div className="flex flex-col items-center gap-3 text-center max-w-sm">
+        <div className="size-20 rounded-3xl bg-primary/10 flex items-center justify-center">
+          <Egg className="size-10 text-primary" />
+        </div>
+        <h1 className="text-2xl font-bold">NOSTR PETS</h1>
+        <p className="text-muted-foreground">
+          Log in with your Nostr account to care for your virtual pet companion.
+        </p>
+        <LoginArea className="mt-2" />
+      </div>
+    </main>
+  );
+}
+
+// ─── Breed Category Picker ────────────────────────────────────────────────────
+
+function BreedCategoryPicker({
+  onSelectCategory,
+  compact = false,
+}: {
+  onSelectCategory: (category: PetsBreedCategory) => void;
+  compact?: boolean;
+}) {
+  const iconMap: Record<PetsBreedCategory, ComponentType<{ className?: string }>> = {
+    '2140-pets': Sparkles,
+    'ditto-blobbi': Cat,
+    bao: Wallet,
+    custom: Palette,
+  };
+
+  if (compact) {
+    return (
+      <div className="flex flex-col items-center gap-4 p-2">
+        <div className="text-center space-y-1">
+          <h2 className="text-lg font-semibold">Choose a breed</h2>
+          <p className="text-sm text-muted-foreground">
+            Pick a category for your new companion.
+          </p>
+        </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full">
+          {BREED_CATEGORIES.map((cat) => {
+            const Icon = iconMap[cat.id];
+            return (
+              <button
+                key={cat.id}
+                type="button"
+                onClick={() => onSelectCategory(cat.id)}
+                className={cn(
+                  'flex flex-col items-center gap-2 rounded-2xl border p-4 text-center transition-colors',
+                  'hover:border-primary/60 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary'
+                )}
+              >
+                <div className="size-10 rounded-xl bg-primary/10 flex items-center justify-center">
+                  <Icon className="size-5 text-primary" />
+                </div>
+                <div>
+                  <p className="font-medium text-sm">{cat.label}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{cat.description}</p>
+                </div>
+                <BreedCategoryPreviews category={cat.id} size="sm" limit={6} className="mt-2" />
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <main className="flex flex-col items-center justify-center p-6 gap-6 min-h-[60vh]">
+      <div className="flex flex-col items-center gap-3 text-center max-w-md">
+        <div className="size-20 rounded-3xl bg-primary/10 flex items-center justify-center">
+          <Egg className="size-10 text-primary" />
+        </div>
+        <h1 className="text-2xl font-bold">Choose your first companion</h1>
+        <p className="text-muted-foreground">
+          Pick a breed category. You&apos;ll receive a random pet from that group.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 w-full max-w-2xl">
+        {BREED_CATEGORIES.map((cat) => {
+          const Icon = iconMap[cat.id];
+          return (
+            <button
+              key={cat.id}
+              type="button"
+              onClick={() => onSelectCategory(cat.id)}
+              className={cn(
+                'flex flex-col items-center gap-3 rounded-2xl border p-5 text-center transition-colors',
+                'hover:border-primary/60 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary'
+              )}
+            >
+              <div className="size-14 rounded-xl bg-primary/10 flex items-center justify-center">
+                <Icon className="size-7 text-primary" />
+              </div>
+              <div>
+                <p className="font-semibold">{cat.label}</p>
+                <p className="text-xs text-muted-foreground mt-1">{cat.description}</p>
+              </div>
+              <BreedCategoryPreviews category={cat.id} size="md" className="mt-3" />
+            </button>
+          );
+        })}
+      </div>
+    </main>
+  );
+}
+
+// ─── Adoption Flow Portal ─────────────────────────────────────────────────────
+
+/**
+ * Renders the onboarding/hatching flow in a portal so it escapes any parent
+ * stacking context (e.g. a shadcn Dialog with transforms). Without this, the
+ * flow's fixed-position layers end up clipped or hidden behind the dialog
+ * overlay, leaving only a thin visible line when a breed category is selected.
+ */
+function PetsAdoptionFlowPortal({
+  profile,
+  updateProfileEvent,
+  updateCompanionEvent,
+  invalidateProfile,
+  invalidateCompanion,
+  setStoredSelectedD,
+  breedCategory,
+  onComplete,
+}: {
+  profile: NostrPetProfile | null;
+  updateProfileEvent: (event: NostrEvent) => void;
+  updateCompanionEvent: (event: NostrEvent) => void;
+  invalidateProfile: () => void;
+  invalidateCompanion: () => void;
+  setStoredSelectedD: (d: string) => void;
+  breedCategory?: PetsBreedCategory;
+  onComplete: () => void;
+}) {
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[300]"
+      onPointerDown={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <PetsOnboardingFlow
+        profile={profile}
+        updateProfileEvent={updateProfileEvent}
+        updateCompanionEvent={updateCompanionEvent}
+        invalidateProfile={invalidateProfile}
+        invalidateCompanion={invalidateCompanion}
+        setStoredSelectedD={setStoredSelectedD}
+        breedCategory={breedCategory}
+        adoptionOnly={false}
+        onComplete={onComplete}
+      />
+    </div>,
+    document.body
+  );
+}
+
+// ─── Main Content ─────────────────────────────────────────────────────────────
+
+function PetsContent() {
+  const { user } = useCurrentUser();
+  const { nostr } = useNostr();
+  const { mutateAsync: publishEvent, isPending: isPublishing } = usePetsNostrPublish();
+  const { ensureCanonicalPetsBeforeAction } = usePetsMigration();
+  
+  const {
+    profile,
+    isLoading: profileLoading,
+    invalidate: invalidateProfile,
+    updateProfileEvent,
+  } = useNostrPetProfile();
+
+  // Active Pets wallet: real Cashu (NIP-60) by default, or BAO signet/demo.
+  const petsWalletResult = usePetsWallet();
+  const petsWallet = petsWalletResult.wallet;
+  const isCashuPetsWallet = petsWalletResult.isCashu;
+
+  // Align the active wallet mode with the profile on first load when the user
+  // has never explicitly chosen a mode. This prevents a new profile (which
+  // defaults to BAO/demo) from showing the real-sats wallet by default.
+  useEffect(() => {
+    if (!profile) return;
+    const hasStoredMode = (() => {
+      try {
+        return localStorage.getItem('pets:walletMode') !== null;
+      } catch {
+        return false;
+      }
+    })();
+    if (hasStoredMode) return;
+    petsWalletResult.setMode(profile.walletMode === 'cashu' ? 'cashu' : 'bao');
+    // Only run once when the profile first becomes available.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile?.walletMode]);
+
+  // Auto-normalize profiles missing pettingLevel tag
+  useNostrPetProfileNormalization({
+    profile,
+    updateProfileEvent,
+    invalidateProfile,
+  });
+  
+  // STEP 1: Fetch ALL the user's Pets events from relays (author is source of truth).
+  // No dList needed — usePetssCollection() without args queries by author + ecosystem tag.
+  // This ensures petss are never invisible due to a stale profile.has[] list.
+  const {
+    companions,
+    isLoading: collectionLoading,
+    isFetching: collectionFetching,
+    invalidate: invalidateCollection,
+    updateCompanionEvent,
+  } = usePetssCollection();
+  
+  // STEP 2: Filter out legacy companions that have been migrated to canonical format.
+  // A legacy Pets is hidden when a canonical Pets with the same name exists AND
+  // the legacy d-tag is no longer in profile.has (confirming migration occurred).
+  const filteredCompanions = useMemo(() => {
+    if (!profile) return companions;
+    return filterMigratedLegacyCompanions(companions, profile.has);
+  }, [companions, profile]);
+
+  const filteredCompanionsByD = useMemo(() => {
+    const record: Record<string, PetsCompanion> = {};
+    for (const c of filteredCompanions) {
+      record[c.d] = c;
+    }
+    return record;
+  }, [filteredCompanions]);
+
+  // STEP 3: Sync visible companions whose mirror tags are stale.
+  // Republishes only companions with actual mismatches (needsSeedIdentitySync flag).
+  useSeedIdentitySync(filteredCompanions, updateCompanionEvent);
+
+  // STEP 4: localStorage for UI selection (user-scoped key)
+  const localStorageKey = user?.pubkey ? getSelectedPetsKey(user.pubkey) : 'pets:selected:d:none';
+  const [storedSelectedD, setStoredSelectedD] = useLocalStorage<string | null>(localStorageKey, null);
+  
+  // State for showing the adoption flow (for "Adopt another NOSTR PET")
+  const [showAdoptionFlow, setShowAdoptionFlow] = useState(false);
+  const [selectedBreedCategory, setSelectedBreedCategory] = useState<PetsBreedCategory | undefined>(undefined);
+  const [adoptionStep, setAdoptionStep] = useState<'category' | 'onboarding'>('category');
+  
+  // STEP 5: Selection Priority
+  // 1) localStorage selection (if valid and exists in collection) - USER SELECTION ALWAYS WINS
+  // 2) first item from profile.has that exists in companionsByD - preferred ordering
+  // 3) first companion in the collection (covers petss missing from profile.has)
+  // 4) undefined (show selector)
+  //
+  // CRITICAL: Default selection must NEVER overwrite localStorage.
+  // User selection persists only via handleSelectPets, not via this computed value.
+  const selectedD = useMemo(() => {
+    // Priority 1: localStorage selection (if it exists in filtered collection)
+    // USER SELECTION ALWAYS WINS - this is the authoritative source
+    if (storedSelectedD && filteredCompanionsByD[storedSelectedD]) {
+      if (DEBUG_PETS) {
+        console.log('[PetsPage] selectedD: using localStorage selection:', storedSelectedD);
+      }
+      return storedSelectedD;
+    }
+    
+    // Priority 2: First item from profile.has that exists in filtered collection
+    // This preserves the user's ordering preference from their profile
+    if (profile) {
+      for (const d of profile.has) {
+        if (filteredCompanionsByD[d]) {
+          if (DEBUG_PETS) {
+            console.log('[PetsPage] selectedD: using default from profile.has:', d, 
+              '(storedSelectedD was:', storedSelectedD, 
+              storedSelectedD ? (filteredCompanionsByD[storedSelectedD] ? 'exists' : 'NOT in filteredCompanionsByD') : 'null', ')');
+          }
+          return d;
+        }
+      }
+    }
+    
+    // Priority 3: First companion in the filtered collection
+    if (filteredCompanions.length > 0) {
+      const firstD = filteredCompanions[0].d;
+      if (DEBUG_PETS) {
+        console.log('[PetsPage] selectedD: using first companion from collection:', firstD);
+      }
+      return firstD;
+    }
+    
+    // Priority 4: No valid selection
+    if (DEBUG_PETS) {
+      console.log('[PetsPage] selectedD: no valid selection available');
+    }
+    return undefined;
+  }, [profile, storedSelectedD, filteredCompanionsByD, filteredCompanions]);
+  
+  // NOTE: We intentionally do NOT auto-save the computed selectedD to localStorage.
+  // This prevents the default selection from overwriting user selections during:
+  // - WebSocket updates
+  // - Query refetches  
+  // - Race conditions where storedSelectedD is not yet in filteredCompanionsByD
+  //
+  // User selections are only persisted via handleSelectPets (line ~232).
+  
+  // Get the selected companion from the filtered collection
+  const companion = selectedD ? filteredCompanionsByD[selectedD] ?? null : null;
+  
+  // Debug log to confirm which Pets is rendered (dev only)
+  useEffect(() => {
+    if (DEBUG_PETS && companion) {
+      console.log('[Pets UI]', {
+        selectedD,
+        name: companion.name,
+        stage: companion.stage,
+        state: companion.state,
+        isLegacy: companion.isLegacy,
+      });
+    }
+  }, [selectedD, companion]);
+  
+  // Combine loading/fetching states
+  const companionFetching = collectionFetching;
+  const invalidateCompanion = invalidateCollection;
+  
+  const [actionInProgress, setActionInProgress] = useState<string | null>(null);
+  
+  // Handler for selecting a Pets from the selector
+  // This is the ONLY place where user selection is persisted to localStorage
+  const handleSelectPets = useCallback((d: string) => {
+    if (DEBUG_PETS) {
+      console.log('[PetsPage] handleSelectPets: user selected:', d, '(previous storedSelectedD was:', storedSelectedD, ')');
+    }
+    setStoredSelectedD(d);
+  }, [setStoredSelectedD, storedSelectedD]);
+
+  // ─── Helper: Ensure Canonical Before Action ───
+  // Centralized migration helper that auto-migrates legacy pets before any action
+  const ensureCanonicalBeforeAction = useCallback(async () => {
+    if (!companion || !profile) return null;
+    
+    return ensureCanonicalPetsBeforeAction({
+      companion,
+      profile,
+      updateProfileEvent,
+      updateCompanionEvent,
+      updateStoredSelectedD: setStoredSelectedD,
+    });
+  }, [companion, profile, ensureCanonicalPetsBeforeAction, updateProfileEvent, updateCompanionEvent, setStoredSelectedD]);
+  
+  // ─── Rest Action (with automatic legacy migration) ───
+  // Operates on the page-selected `companion` (not profile.currentCompanion).
+  // The companion floating button has its own independent sleep toggle.
+  const handleRest = useCallback(async () => {
+    if (!user?.pubkey || !companion) return;
+
+    const isCurrentlySleeping = companion.state === 'sleeping';
+    const newState = isCurrentlySleeping ? 'active' : 'sleeping';
+
+    setActionInProgress('rest');
+    try {
+      // Ensure canonical before action (auto-migrates legacy pets)
+      const canonical = await ensureCanonicalBeforeAction();
+      if (!canonical) {
+        setActionInProgress(null);
+        return;
+      }
+
+      // Apply accumulated decay before the state change
+      const now = Math.floor(Date.now() / 1000);
+      const decayResult = applyPetsDecayForCompanion(canonical.companion, now);
+
+      // Build the new tags with decayed stats + new state
+      // Get streak updates (putting to sleep/waking counts as care activity)
+      const streakUpdates = getStreakTagUpdates(canonical.companion) ?? {};
+
+      const newTags = updatePetsTags(canonical.allTags, {
+        state: newState,
+        ...statsToTagUpdates(decayResult.stats, now),
+        ...streakUpdates,
+      });
+
+      const prev = canonical.companion.event;
+      const event = await publishEvent({
+        kind: KIND_PETS_STATE,
+        content: canonical.content,
+        tags: newTags,
+        prev,
+      });
+
+      updateCompanionEvent(event);
+
+      toast({
+        title: isCurrentlySleeping ? 'Woke up!' : 'Resting...',
+        description: isCurrentlySleeping
+          ? 'Your NOSTR PET is now awake and active!'
+          : 'Your NOSTR PET is taking a rest.',
+      });
+
+      // Track daily mission progress for sleep action (only when putting to sleep)
+      if (!isCurrentlySleeping) {
+        trackDailyMissionProgress('sleep', 1, user?.pubkey);
+      }
+    } catch (error) {
+      console.error('Failed to update state:', error);
+      toast({
+        title: 'Failed to update',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setActionInProgress(null);
+    }
+  }, [user?.pubkey, companion, ensureCanonicalBeforeAction, publishEvent, updateCompanionEvent]);
+  
+  // ─── Shop Purchase Hook ───
+  const { mutateAsync: purchaseItem, isPending: isPurchasingItem } = usePetsPurchaseItem(
+    profile ?? null,
+    companion,
+    petsWallet,
+    updateCompanionEvent,
+  );
+
+  // ─── Use Inventory Item Hook ───
+  const { mutateAsync: executeUseItem, isPending: itemUsePending } = usePetsUseInventoryItem({
+    companion,
+    profile,
+    ensureCanonicalBeforeAction,
+    updateCompanionEvent,
+    updateProfileEvent,
+  });
+
+  const isUsingItem = itemUsePending || isPurchasingItem;
+  
+  // Handler for using an item (always uses once)
+  const handleUseItem = useCallback(async (itemId: string, action: InventoryAction) => {
+    await executeUseItem({ itemId, action });
+  }, [executeUseItem]);
+  
+  // ─── Pets Actions Registration ───
+  // Register item use functionality with the global context so PetsCompanionLayer can use it
+  const useItemForContext = useMemo<UseItemFunction | null>(() => {
+    // Only provide the function when companion and profile are available
+    if (!companion || !profile) return null;
+    
+    return async (itemId, action) => {
+      try {
+        const result = await executeUseItem({ itemId, action });
+        return { 
+          success: true, 
+          statsChanged: result?.statsChanged,
+        };
+      } catch (error) {
+        return { 
+          success: false, 
+          error: error instanceof Error ? error.message : 'Unknown error',
+        };
+      }
+    };
+  }, [executeUseItem, companion, profile]);
+  
+  // Register with the global PetsActionsContext
+  usePetsActionsRegistration(useItemForContext, isUsingItem);
+  
+  // ─── Stage Transition Hooks ───
+  const { isPending: isHatching } = usePetsHatch({
+    companion,
+    profile,
+    ensureCanonicalBeforeAction,
+    updateCompanionEvent,
+    isCashuPetsWallet: isCashuPetsWallet,
+  });
+
+  const { mutateAsync: executeEvolve, isPending: isEvolving } = usePetsEvolve({
+    companion,
+    profile,
+    ensureCanonicalBeforeAction,
+    updateCompanionEvent,
+    isCashuPetsWallet: isCashuPetsWallet,
+  });
+  
+  // Handler for evolution (baby -> adult)
+  const handleEvolve = useCallback(async () => {
+    await executeEvolve();
+  }, [executeEvolve]);
+  
+  // ─── Direct Action Hook ───
+  const { mutateAsync: executeDirectAction, isPending: isDirectActionPending } = usePetsDirectAction({
+    companion,
+    ensureCanonicalBeforeAction,
+    updateCompanionEvent,
+    updateProfileEvent,
+  });
+  
+  // Handler for direct actions (play_music, sing)
+  const handleDirectAction = useCallback(async (action: DirectAction) => {
+    await executeDirectAction({ action });
+  }, [executeDirectAction]);
+  
+  // ─── DEV ONLY: State Editor Hook ───
+  const { mutateAsync: executeDevUpdate, isPending: isDevUpdating } = usePetsDevUpdate({
+    companion,
+    updateCompanionEvent,
+  });
+  
+  // State for dev editor modal
+  const [showDevEditor, setShowDevEditor] = useState(false);
+  
+  // Handler for dev editor apply
+  const handleDevEditorApply = useCallback(async (updates: PetsDevUpdates) => {
+    await executeDevUpdate(updates);
+  }, [executeDevUpdate]);
+  
+  // ─── Determine UI State ───
+  // Clear separation of cases based on profile and pet data
+  
+  // Derive page state for debugging
+  const pageState = useMemo(() => {
+    if (profileLoading) return 'loading-profile';
+    if (!profile) return 'no-profile';
+    if (collectionLoading) return 'loading-companions';
+    if (collectionFetching && companions.length === 0) return 'fetching-companions';
+    if (companions.length === 0) return 'no-pets';
+    if (!selectedD) return 'no-selection';
+    if (!companion) return 'companion-not-resolved';
+    return 'dashboard';
+  }, [profileLoading, profile, collectionLoading, collectionFetching, companions.length, selectedD, companion]);
+  
+  // Debug log page state decisions
+  if (DEBUG_PETS) {
+    console.log('[PetsPage] State decision:', {
+      pageState,
+      profileLoading,
+      hasProfile: !!profile,
+      profileName: profile?.name,
+      profileHas: profile?.has?.length ?? 0,
+      collectionLoading,
+      collectionFetching,
+      companionsLoaded: companions.length,
+      selectedD,
+      hasCompanion: !!companion,
+    });
+  }
+  
+  // ─── Hatching Ceremony State ───
+  // The ceremony creates eggs in the background which updates profile data.
+  // Without this flag, PetsPage would immediately fall through to the
+  // dashboard the moment the egg appears in has[]. The flag keeps the
+  // ceremony mounted until it calls onComplete.
+  //
+  // IMPORTANT: The ceremony decision is based on actual companion stages,
+  // NOT the onboardingDone flag alone. This handles inconsistent accounts
+  // where onboardingDone may be true despite the user never having hatched.
+  //
+  // Ceremony decision tree:
+  // 1. No profile → ceremony (brand new user, creates profile + egg)
+  // 2. Profile exists but no petss found on relays → ceremony (creates egg)
+  // 3. Profile with petss → inspect companion stages, then:
+  //    a. Any baby/adult exists → skip ceremony (dashboard)
+  //    b. Only eggs exist → ceremony with existingCompanion (reuses egg)
+  //    c. No companions resolved → ceremony (creates egg)
+  const [ceremonyInProgress, setCeremonyInProgress] = useState(false);
+  // Set to true once the companion-stage check has resolved so it doesn't
+  // re-run on every render as companion data updates.
+  const [ceremonyCheckDone, setCeremonyCheckDone] = useState(false);
+  // Locks the egg chosen for the ceremony so a page refresh mid-animation
+  // doesn't switch to a different egg or create a new one.
+  const ceremonyEggRef = useRef<PetsCompanion | null>(null);
+  
+  // Cases that definitely need ceremony (no need to wait for companions)
+  // NOTE: Auto-ceremony is disabled. Users must explicitly click Adopt to
+  // create/publish a pet. This prevents new accounts from silently publishing
+  // a pet event to the ₿AO relay on their first visit to /pets.
+  const definitelyNeedsCeremony = false;
+  // Whether we've finished loading enough data to make the decision
+  const companionDataReady = !collectionLoading && (!collectionFetching || companions.length > 0);
+  // Cases where we must inspect actual companion stages before deciding.
+  // This fires for ALL users with a profile — regardless of onboardingDone —
+  // so that accounts with onboardingDone=true but only eggs still get
+  // the ceremony.
+  const pendingCeremonyCheck = !definitelyNeedsCeremony && !!profile && !ceremonyCheckDone;
+  
+  // Auto-start ceremony for definite cases (no profile / no pets)
+  // Disabled — see `definitelyNeedsCeremony` comment above.
+  // useEffect(() => {
+  //   if (definitelyNeedsCeremony && !profileLoading && !ceremonyInProgress) {
+  //     setCeremonyInProgress(true);
+  //   }
+  // }, [definitelyNeedsCeremony, profileLoading, ceremonyInProgress]);
+  
+  // Resolve pending ceremony check once companions are loaded
+  useEffect(() => {
+    if (!pendingCeremonyCheck || !companionDataReady || ceremonyInProgress) return;
+    
+    const eggs = companions.filter(c => c.stage === 'egg');
+    const hasHatchedPets = companions.some(c => c.stage === 'baby' || c.stage === 'adult');
+    
+    // Mark check as done so this effect doesn't re-fire.
+    setCeremonyCheckDone(true);
+    
+    if (hasHatchedPets) {
+      // User already has a hatched pets — skip ceremony entirely.
+      // Auto-fix the onboardingDone flag if it was missing.
+      if (DEBUG_PETS) console.log('[PetsPage] Skipping ceremony: user has hatched pets');
+      if (profile && !profile.onboardingDone && user?.pubkey) {
+        fetchFreshPetsEvent(nostr, {
+          kinds: [KIND_NOSTR_PET_PROFILE],
+          authors: [user.pubkey],
+        }).then(prev => {
+          if (!prev) return;
+          const updatedTags = updateNostrPetProfileTags(prev.tags, {
+            pets_onboarding_done: 'true',
+          });
+          return publishEvent({
+            kind: KIND_NOSTR_PET_PROFILE,
+            content: prev.content,
+            tags: updatedTags,
+            prev,
+          });
+        }).then(event => {
+          if (event) {
+            updateProfileEvent(event);
+            invalidateProfile();
+          }
+        }).catch(err => console.error('[PetsPage] Failed to auto-fix onboardingDone:', err));
+      }
+    } else if (eggs.length > 0) {
+      // User has only eggs. Auto-hatching is disabled so testing stays manual;
+      // the egg can still be hatched from the Quests tab or dev tools.
+      if (DEBUG_PETS) console.log('[PetsPage] Skipping auto-ceremony: user has eggs only');
+    } else {
+      // No pets events found on relays — new user without a pet.
+      // Do not auto-start the ceremony; they can click Adopt when ready.
+      if (DEBUG_PETS) console.log('[PetsPage] Skipping auto-ceremony: no companions found');
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingCeremonyCheck, companionDataReady, ceremonyInProgress]);
+  
+  // ─── CASE A: Profile still loading ───
+  if (profileLoading && !ceremonyInProgress) {
+    return <DashboardLoadingState />;
+  }
+  
+  // ─── CASE A2: Waiting for companions to decide about ceremony ───
+  if (pendingCeremonyCheck && !companionDataReady && !ceremonyInProgress) {
+    if (DEBUG_PETS) console.log('[PetsPage] Showing: loading (waiting for companions to decide ceremony)');
+    return <DashboardLoadingState />;
+  }
+  
+  // ─── CASE B/C: Hatching ceremony ───
+  // Stays mounted until the ceremony explicitly completes, even if the
+  // underlying data changes during the ceremony.
+  // Portaled to document.body so it escapes the center column stacking context
+  // (which has `relative z-0`) and covers the entire app shell including the
+  // RightSidebar — matching the subsequent hatch ceremony portal at z-[100].
+  if (ceremonyInProgress) {
+    if (DEBUG_PETS) console.log('[PetsPage] Showing: hatching ceremony');
+    return createPortal(
+      <div className="fixed inset-0 z-[100] bg-background">
+        <PetsOnboardingFlow
+          profile={profile ?? null}
+          updateProfileEvent={updateProfileEvent}
+          updateCompanionEvent={updateCompanionEvent}
+          invalidateProfile={invalidateProfile}
+          invalidateCompanion={invalidateCompanion}
+          setStoredSelectedD={setStoredSelectedD}
+          existingCompanion={ceremonyEggRef.current}
+          onComplete={() => setCeremonyInProgress(false)}
+          onExit={() => setCeremonyInProgress(false)}
+        />
+      </div>,
+      document.body,
+    );
+  }
+  
+  // After ceremony check, if the user has no profile/pet yet, show the empty
+  // adoption prompt instead of getting stuck on a loading spinner.
+  if (!profile && !profileLoading) {
+    if (DEBUG_PETS) console.log('[PetsPage] Showing: no profile adoption prompt');
+    return (
+      <>
+        <BreedCategoryPicker
+          onSelectCategory={(cat) => {
+            setSelectedBreedCategory(cat);
+            setAdoptionStep('onboarding');
+            setShowAdoptionFlow(true);
+          }}
+        />
+        <Dialog
+          open={showAdoptionFlow}
+          onOpenChange={(open) => {
+            setShowAdoptionFlow(open);
+            if (!open) {
+              setSelectedBreedCategory(undefined);
+              setAdoptionStep('category');
+            }
+          }}
+        >
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto p-0">
+            {adoptionStep === 'category' ? (
+              <BreedCategoryPicker
+                compact
+                onSelectCategory={(cat) => {
+                  setSelectedBreedCategory(cat);
+                  setAdoptionStep('onboarding');
+                }}
+              />
+            ) : (
+              <PetsAdoptionFlowPortal
+                profile={profile ?? null}
+                updateProfileEvent={updateProfileEvent}
+                updateCompanionEvent={updateCompanionEvent}
+                invalidateProfile={invalidateProfile}
+                invalidateCompanion={invalidateCompanion}
+                setStoredSelectedD={setStoredSelectedD}
+                breedCategory={selectedBreedCategory}
+                onComplete={() => setShowAdoptionFlow(false)}
+              />
+            )}
+          </DialogContent>
+        </Dialog>
+      </>
+    );
+  }
+  
+  // ─── CASE D: Companions still loading ───
+  if (collectionLoading) {
+    if (DEBUG_PETS) console.log('[PetsPage] Showing: loading companions');
+    return <DashboardLoadingState />;
+  }
+  
+  // ─── CASE E: Companions not yet resolved (fetching) ───
+  if (collectionFetching && companions.length === 0) {
+    if (DEBUG_PETS) console.log('[PetsPage] Showing: syncing pets from relays');
+    return (
+      <DashboardShell>
+        <div className="flex-1 flex flex-col items-center justify-center p-6 gap-6">
+          <div className="flex flex-col items-center gap-4 text-center max-w-sm">
+            <div className="size-24 rounded-3xl bg-muted/50 flex items-center justify-center">
+              <RefreshCw className="size-12 text-muted-foreground animate-spin" />
+            </div>
+            <h1 className="text-2xl font-bold">Syncing your NOSTR PETS...</h1>
+            <p className="text-muted-foreground">
+              Fetching your pet data from relays...
+            </p>
+          </div>
+        </div>
+      </DashboardShell>
+    );
+  }
+  
+  // ─── CASE F: No pets events found on relays ───
+  // Show the adoption prompt instead of an error. The user can explicitly
+  // create their first pet; nothing is published automatically.
+  if (companions.length === 0 && !collectionLoading && !collectionFetching) {
+    if (DEBUG_PETS) console.log('[PetsPage] Showing: no pet adoption prompt');
+    return (
+      <>
+        <BreedCategoryPicker
+          onSelectCategory={(cat) => {
+            setSelectedBreedCategory(cat);
+            setAdoptionStep('onboarding');
+            setShowAdoptionFlow(true);
+          }}
+        />
+        <Dialog
+          open={showAdoptionFlow}
+          onOpenChange={(open) => {
+            setShowAdoptionFlow(open);
+            if (!open) {
+              setSelectedBreedCategory(undefined);
+              setAdoptionStep('category');
+            }
+          }}
+        >
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto p-0">
+            {adoptionStep === 'category' ? (
+              <BreedCategoryPicker
+                compact
+                onSelectCategory={(cat) => {
+                  setSelectedBreedCategory(cat);
+                  setAdoptionStep('onboarding');
+                }}
+              />
+            ) : (
+              <PetsAdoptionFlowPortal
+                profile={profile ?? null}
+                updateProfileEvent={updateProfileEvent}
+                updateCompanionEvent={updateCompanionEvent}
+                invalidateProfile={invalidateProfile}
+                invalidateCompanion={invalidateCompanion}
+                setStoredSelectedD={setStoredSelectedD}
+                breedCategory={selectedBreedCategory}
+                onComplete={() => setShowAdoptionFlow(false)}
+              />
+            )}
+          </DialogContent>
+        </Dialog>
+      </>
+    );
+  }
+  
+  // ─── CASE G/H: No valid selection or companion not resolved ───
+  // Show selector to pick which pet to display
+  if (!selectedD || !companion) {
+    if (DEBUG_PETS) console.log('[PetsPage] Showing: pet selector');
+    return (
+      <>
+        <PetsSelectorPage
+          companions={filteredCompanions}
+          onSelect={handleSelectPets}
+          isLoading={companionFetching}
+          onAdopt={() => {
+            setSelectedBreedCategory(undefined);
+            setAdoptionStep('category');
+            setShowAdoptionFlow(true);
+          }}
+          currentCompanion={profile?.currentCompanion}
+        />
+        
+        {/* Adoption Flow Modal */}
+        <Dialog
+          open={showAdoptionFlow}
+          onOpenChange={(open) => {
+            setShowAdoptionFlow(open);
+            if (!open) {
+              setSelectedBreedCategory(undefined);
+              setAdoptionStep('category');
+            }
+          }}
+        >
+          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto p-0">
+            {adoptionStep === 'category' ? (
+              <BreedCategoryPicker
+                compact
+                onSelectCategory={(cat) => {
+                  setSelectedBreedCategory(cat);
+                  setAdoptionStep('onboarding');
+                }}
+              />
+            ) : (
+              <PetsAdoptionFlowPortal
+                profile={profile ?? null}
+                updateProfileEvent={updateProfileEvent}
+                updateCompanionEvent={updateCompanionEvent}
+                invalidateProfile={invalidateProfile}
+                invalidateCompanion={invalidateCompanion}
+                setStoredSelectedD={setStoredSelectedD}
+                breedCategory={selectedBreedCategory}
+                onComplete={() => setShowAdoptionFlow(false)}
+              />
+            )}
+          </DialogContent>
+        </Dialog>
+      </>
+    );
+  }
+  
+  // ─── CASE I: Everything ready - show dashboard ───
+  // At this point: companion is PetsCompanion, selectedD is string (narrowed by Case H guard)
+  // Note: Item use registration is handled by usePetsActionsRegistration hook above
+  if (DEBUG_PETS) console.log('[PetsPage] Showing: dashboard');
+  return (
+    <PetsDashboard
+      companion={companion}
+      companions={filteredCompanions}
+      selectedD={selectedD}
+      onSelectPets={handleSelectPets}
+      onRest={handleRest}
+      onUseItem={handleUseItem}
+      onDirectAction={handleDirectAction}
+      isUsingItem={isUsingItem}
+      purchaseItem={purchaseItem}
+      petsWallet={petsWallet}
+      isDirectActionPending={isDirectActionPending}
+      actionInProgress={actionInProgress}
+      isPublishing={isPublishing}
+      profile={profile}
+      onEvolve={handleEvolve}
+      isHatching={isHatching}
+      isEvolving={isEvolving}
+      publishEvent={publishEvent}
+      updateProfileEvent={updateProfileEvent}
+      updateCompanionEvent={updateCompanionEvent}
+      invalidateProfile={invalidateProfile}
+      invalidateCompanion={invalidateCompanion}
+      setStoredSelectedD={setStoredSelectedD}
+      ensureCanonicalBeforeAction={ensureCanonicalBeforeAction}
+      // DEV ONLY: State editor props
+      showDevEditor={showDevEditor}
+      setShowDevEditor={setShowDevEditor}
+      onDevEditorApply={handleDevEditorApply}
+      isDevUpdating={isDevUpdating}
+    />
+  );
+}
+
+// ─── Dashboard Shell ──────────────────────────────────────────────────────────
+
+interface DashboardShellProps {
+  children: React.ReactNode;
+  className?: string;
+}
+
+function DashboardShell({ children, className }: DashboardShellProps) {
+  return (
+    <main className={cn(
+      'flex flex-col overflow-hidden bg-background',
+      // Mobile: fixed to escape pb-overscroll on the parent
+      'max-sidebar:fixed max-sidebar:inset-0 max-sidebar:top-mobile-bar max-sidebar:z-0',
+      // Desktop: normal flow within the center column
+      'sidebar:h-dvh',
+      className,
+    )}>
+      <div className="mx-auto w-full max-w-2xl lg:max-w-3xl flex-1 min-h-0 flex flex-col">
+        {children}
+      </div>
+    </main>
+  );
+}
+
+// ─── Dashboard Drawer Type ────────────────────────────────────────────────────
+
+/** Which drawer is open; 'none' = room view visible */
+type DashboardDrawer = 'none' | 'activity' | 'pets' | 'species' | 'earn' | 'shop' | 'wallet';
+
+// ─── Main Pets Dashboard ────────────────────────────────────────────────────
+
+interface PetsDashboardProps {
+  companion: PetsCompanion;
+  companions: PetsCompanion[];
+  selectedD: string;
+  onSelectPets: (d: string) => void;
+  onRest: () => void;
+  onUseItem: (itemId: string, action: InventoryAction) => Promise<void>;
+  onDirectAction: (action: DirectAction) => Promise<void>;
+  isUsingItem: boolean;
+  purchaseItem: (req: { itemId: string; price: number; quantity: number; currency?: 'fiat' | 'sats' }) => Promise<unknown>;
+  petsWallet: (CashuWalletState & CashuWalletActions) | null | undefined;
+  isDirectActionPending: boolean;
+  actionInProgress: string | null;
+  isPublishing: boolean;
+  profile: NostrPetProfile | null;
+  // Stage transition handlers
+  onEvolve: () => Promise<void>;
+  isHatching: boolean;
+  isEvolving: boolean;
+  // Adoption flow props
+  publishEvent: (params: { kind: number; content: string; tags: string[][]; prev?: import('@nostrify/nostrify').NostrEvent }) => Promise<import('@nostrify/nostrify').NostrEvent>;
+  updateProfileEvent: (event: import('@nostrify/nostrify').NostrEvent) => void;
+  updateCompanionEvent: (event: import('@nostrify/nostrify').NostrEvent) => void;
+  invalidateProfile: () => void;
+  invalidateCompanion: () => void;
+  setStoredSelectedD: (d: string) => void;
+  // Incubation helpers
+  ensureCanonicalBeforeAction: () => Promise<{
+    companion: PetsCompanion;
+    content: string;
+    allTags: string[][];
+    wasMigrated: boolean;
+    profileAllTags: string[][];
+    profileEvent: import('@nostrify/nostrify').NostrEvent;
+    profileStorage: StorageItem[];
+  } | null>;
+  // DEV ONLY: State editor props
+  showDevEditor: boolean;
+  setShowDevEditor: (show: boolean) => void;
+  onDevEditorApply: (updates: PetsDevUpdates) => Promise<void>;
+  isDevUpdating: boolean;
+}
+
+function PetsDashboard({
+  companion,
+  companions,
+  selectedD,
+  onSelectPets,
+  onRest,
+  onUseItem,
+  onDirectAction,
+  isUsingItem,
+  purchaseItem,
+  petsWallet,
+  isDirectActionPending,
+  actionInProgress,
+  isPublishing,
+  profile,
+  onEvolve,
+  isHatching,
+  isEvolving,
+  publishEvent,
+  updateProfileEvent,
+  updateCompanionEvent,
+  invalidateProfile,
+  invalidateCompanion,
+  setStoredSelectedD,
+  ensureCanonicalBeforeAction,
+  // DEV ONLY
+  showDevEditor,
+  setShowDevEditor,
+  onDevEditorApply,
+  isDevUpdating,
+}: PetsDashboardProps) {
+  // Layout options (hasSubHeader, noOverscroll) set at PetsPage level
+  const { user } = useCurrentUser();
+  const { nostr } = useNostr();
+  const { config } = useAppContext();
+
+  // ─── Full-screen game mode ───
+  const [gameMode, setGameMode] = useState(false);
+  useEffect(() => {
+    const onChange = () => {
+      setGameMode(document.fullscreenElement === document.documentElement);
+    };
+    document.addEventListener('fullscreenchange', onChange);
+    return () => document.removeEventListener('fullscreenchange', onChange);
+  }, []);
+  useLayoutOptions({
+    hasSubHeader: true,
+    noOverscroll: true,
+    hideLeftSidebar: gameMode,
+    rightSidebar: gameMode ? null : undefined,
+    noMaxWidth: gameMode,
+    hideTopBar: gameMode,
+    hideBottomNav: gameMode,
+  });
+  
+  const isSleeping = companion.state === 'sleeping';
+  const isEgg = companion.stage === 'egg';
+
+  // ─── Bitcoin-block age gate ───
+  // Eggs must wait for at least one real block to be mined before they can hatch.
+  // Prefer the stored birth_block tag; fall back to the 10-minute estimate for
+  // legacy eggs.
+  const currentBlockHeight = useCurrentBlockHeight(config.esploraApis);
+  const storedBirthBlock = getStoredBirthBlockHeight(companion.event.tags);
+  const isEggOldEnough = isEgg && isPetOldEnough(companion.event.created_at, currentBlockHeight, storedBirthBlock);
+  
+  // ─── Active Drawer ───
+  const [activeDrawer, setActiveDrawer] = useState<DashboardDrawer>('none');
+
+  // ─── Room Navigation ───
+  // Persisted room: only written on user-driven room changes (sleep override is UI-only).
+  const roomStorageKey = `pets:room:${user?.pubkey ?? 'anon'}:${companion.d}`;
+  const roomDefault = isValidRoomId(profile?.room) ? profile.room : DEFAULT_INITIAL_ROOM;
+  const [storedRoom, setStoredRoom] = useLocalStorage<PetsRoomId>(roomStorageKey, roomDefault);
+  // Effective room: sleeping temporarily forces 'rest'; waking up returns to storedRoom.
+  const currentRoom: PetsRoomId = isSleeping ? 'rest' : isValidRoomId(storedRoom) ? storedRoom : DEFAULT_INITIAL_ROOM;
+  const poopStateRef = useRef<PoopState | null>(null);
+
+    // ─── Interaction Activity ───
+  // Disabled for eggs: they do not participate in social stat-loss/care flow.
+  const { interactions, isLoading: interactionsLoading } = usePetsInteractions(isEgg ? null : companion);
+
+  // Interaction reaction layer — temporary visual rewards for care actions.
+  // Produces emotion overrides, body animations, and particle overlays.
+  // Placed before useCanonicalSync so the trigger can be passed directly.
+  const { state: interactionReaction, trigger: triggerInteractionReaction } = useInteractionReaction();
+
+  // Direct hover/click interactions on the room-stage pet (turn + reactions).
+  const {
+    facing: directFacing,
+    isHovered: isDirectHovered,
+    interactionReaction: directInteractionReaction,
+    interactionProps: directInteractionProps,
+  } = usePetsDirectInteraction({ disabled: isSleeping || isEgg });
+
+  // Blend care-action reactions with direct hover/poke reactions.
+  const blendedInteractionReaction = useMemo<InteractionReactionState>(() => ({
+    emotionOverride: directInteractionReaction.emotionOverride ?? interactionReaction.emotionOverride,
+    bodyAnimation: directInteractionReaction.bodyAnimation ?? interactionReaction.bodyAnimation,
+    sparkles: directInteractionReaction.sparkles || interactionReaction.sparkles,
+    bubbles: directInteractionReaction.bubbles || interactionReaction.bubbles,
+    hearts: directInteractionReaction.hearts || interactionReaction.hearts,
+    isActive: directInteractionReaction.isActive || interactionReaction.isActive,
+  }), [directInteractionReaction, interactionReaction]);
+
+  // ─── Automatic Canonical Sync ───
+  // On mount (or companion switch), persist accumulated decay and consolidate
+  // pending social interactions in a single publish. Replaces the old manual
+  // "Apply pending care" button. Runs at most once per companion d-tag.
+  const handleSocialConsolidated = useCallback(() => {
+    triggerInteractionReaction('social_hearts');
+  }, [triggerInteractionReaction]);
+
+  useCanonicalSync({
+    companion,
+    interactions,
+    interactionsLoading,
+    updateCompanionEvent,
+    ensureCanonicalBeforeAction,
+    onSocialConsolidated: handleSocialConsolidated,
+  });
+
+  // ─── Social Permission Toggle ───
+  const [isSocialToggling, setIsSocialToggling] = useState(false);
+
+  const handleToggleSocial = useCallback(async (open: boolean) => {
+    if (!companion) return;
+
+    setIsSocialToggling(true);
+    try {
+      const canonical = await ensureCanonicalBeforeAction();
+      if (!canonical) {
+        setIsSocialToggling(false);
+        return;
+      }
+
+      const newTags = updatePetsTags(canonical.allTags, {
+        social: open ? 'open' : 'closed',
+      });
+
+      const prev = canonical.companion.event;
+      const event = await publishEvent({
+        kind: KIND_PETS_STATE,
+        content: canonical.content,
+        tags: newTags,
+        prev,
+      });
+
+      updateCompanionEvent(event);
+
+      toast({
+        title: open ? 'Social interactions enabled' : 'Social interactions disabled',
+        description: open
+          ? 'Other people can now care for this NOSTR PET.'
+          : 'Only you can interact with this NOSTR PET.',
+      });
+    } catch (error) {
+      console.error('Failed to toggle social permission:', error);
+      toast({
+        title: 'Failed to update',
+        description: 'Could not change the social interaction setting. Please try again.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSocialToggling(false);
+    }
+  }, [companion, ensureCanonicalBeforeAction, publishEvent, updateCompanionEvent]);
+
+  // ─── Room Layout (read-only, decorative) ───
+  const parsedRoomLayouts = useMemo(() => parseRoomLayoutsContent(profile?.content), [profile?.content]);
+  const currentRoomLayout = useMemo(() => getEffectiveRoomLayout(currentRoom, parsedRoomLayouts), [currentRoom, parsedRoomLayouts]);
+
+  // ─── Room Furniture (read-only, decorative) ───
+  const parsedRoomFurniture = useMemo(() => parseRoomFurnitureContent(profile?.content), [profile?.content]);
+  const currentFurniturePlacements = useMemo(() => getEffectiveRoomFurniture(currentRoom, parsedRoomFurniture), [currentRoom, parsedRoomFurniture]);
+
+  // ─── Room Layout Editor (save/reset) ───
+  const [isSavingLayout, setIsSavingLayout] = useState(false);
+  const [isRoomEditorOpen, setIsRoomEditorOpen] = useState(false);
+
+  // ─── Room Furniture Editor (draft with persistence) ───
+  const [isFurnitureEditorOpen, setIsFurnitureEditorOpen] = useState(false);
+  const [furnitureDraft, setFurnitureDraft] = useState<FurniturePlacement[] | null>(null);
+  const [furnitureSelectedIndex, setFurnitureSelectedIndex] = useState<number | null>(null);
+  const [isSavingFurniture, setIsSavingFurniture] = useState(false);
+  const roomContainerRef = useRef<HTMLDivElement>(null);
+
+  // Derived: active layer = selected item's layer (for visual emphasis)
+  const furnitureActiveLayer = furnitureSelectedIndex !== null && furnitureDraft
+    ? furnitureDraft[furnitureSelectedIndex]?.layer
+    : undefined;
+
+  // Derived: toolbar placement — opposite side of selected item to avoid covering it
+  const furnitureToolbarPlacement: 'top' | 'bottom' = useMemo(() => {
+    if (furnitureSelectedIndex === null || !furnitureDraft) return 'bottom';
+    const item = furnitureDraft[furnitureSelectedIndex];
+    if (!item) return 'bottom';
+    // Item in bottom half → toolbar at top; item in top half → toolbar at bottom
+    return item.y >= 0.5 ? 'top' : 'bottom';
+  }, [furnitureSelectedIndex, furnitureDraft]);
+
+  const handleOpenFurnitureEditor = useCallback(() => {
+    setIsRoomEditorOpen(false); // close style editor if open
+    setActiveDrawer('none'); // collapse any open drawer
+    setFurnitureDraft([...currentFurniturePlacements]);
+    setFurnitureSelectedIndex(null);
+    setIsFurnitureEditorOpen(true);
+  }, [currentFurniturePlacements]);
+
+  const handleCloseFurnitureEditor = useCallback(() => {
+    setIsFurnitureEditorOpen(false);
+    setFurnitureDraft(null);
+    setFurnitureSelectedIndex(null);
+  }, []);
+
+  const handleFurnitureBackgroundClick = useCallback(() => {
+    setFurnitureSelectedIndex(null);
+  }, []);
+
+  const handleSaveFurniture = useCallback(async () => {
+    if (!user?.pubkey || !furnitureDraft) return;
+    setIsSavingFurniture(true);
+    try {
+      const freshProfile = await fetchFreshNostrPetProfile(nostr, user.pubkey);
+      if (!freshProfile) {
+        toast({ title: 'Error', description: 'Could not fetch profile. Try again.' });
+        return;
+      }
+      const prev = freshProfile.event;
+      const existingFurniture = parseRoomFurnitureContent(prev.content);
+      const updatedFurniture: RoomFurnitureContent = {
+        v: 1,
+        by_room: { ...existingFurniture?.by_room, [currentRoom]: furnitureDraft },
+      };
+      const content = serializeProfileContent(prev.content, { room_furniture: updatedFurniture });
+      const event = await publishEvent({
+        kind: KIND_NOSTR_PET_PROFILE,
+        content,
+        tags: prev.tags,
+        prev,
+      });
+      updateProfileEvent(event);
+      toast({ title: 'Saved', description: `${ROOM_META[currentRoom].label} furniture updated.` });
+      setIsFurnitureEditorOpen(false);
+      setFurnitureDraft(null);
+      setFurnitureSelectedIndex(null);
+    } catch {
+      toast({ title: 'Error', description: 'Failed to save furniture.' });
+    } finally {
+      setIsSavingFurniture(false);
+    }
+  }, [user?.pubkey, nostr, furnitureDraft, currentRoom, publishEvent, updateProfileEvent]);
+
+  const handleFurnitureMove = useCallback((index: number, x: number, y: number) => {
+    setFurnitureDraft((prev) => {
+      if (!prev) return prev;
+      return prev.map((item, i) => (i === index ? { ...item, x, y } : item));
+    });
+  }, []);
+
+  // ─── Room Layout Editor (handlers) ───
+
+  const handleOpenRoomEditor = useCallback(() => {
+    handleCloseFurnitureEditor(); // close furniture editor if open
+    setIsRoomEditorOpen(true);
+  }, [handleCloseFurnitureEditor]);
+
+  const handleSaveRoomLayout = useCallback(async (roomId: PetsRoomId, layout: RoomLayout) => {
+    if (!user?.pubkey) return;
+    setIsSavingLayout(true);
+    try {
+      const freshProfile = await fetchFreshNostrPetProfile(nostr, user.pubkey);
+      if (!freshProfile) {
+        toast({ title: 'Error', description: 'Could not fetch profile. Try again.' });
+        return;
+      }
+      const prev = freshProfile.event;
+      const existingLayouts = parseRoomLayoutsContent(prev.content);
+      const updatedRoomLayouts: RoomLayoutsContent = {
+        v: 1,
+        by_room: { ...existingLayouts?.by_room, [roomId]: layout },
+      };
+      const content = serializeProfileContent(prev.content, { room_layouts: updatedRoomLayouts });
+      const event = await publishEvent({
+        kind: KIND_NOSTR_PET_PROFILE,
+        content,
+        tags: prev.tags,
+        prev,
+      });
+      updateProfileEvent(event);
+      toast({ title: 'Saved', description: `${ROOM_META[roomId].label} style updated.` });
+    } catch {
+      toast({ title: 'Error', description: 'Failed to save room style.' });
+    } finally {
+      setIsSavingLayout(false);
+    }
+  }, [user?.pubkey, nostr, publishEvent, updateProfileEvent]);
+
+  // ─── Stat Guide Flow ───
+  const [guideTarget, setGuideTarget] = useState<GuideTarget | null>(null);
+
+  // Start a guide: build the target and set state
+  const handleGuide = useCallback((stat: keyof PetsStats) => {
+    setGuideTarget(buildGuideTarget(stat, currentRoom));
+  }, [currentRoom]);
+
+  // Sync guide step with current room:
+  // - entering the target room advances from 'room' to 'item'/'action'
+  // - leaving the target room reverts back to 'room'
+  useEffect(() => {
+    if (!guideTarget) return;
+    const inTargetRoom = currentRoom === guideTarget.targetRoom;
+    if (guideTarget.step === 'room' && inTargetRoom) {
+      setGuideTarget(prev => prev ? { ...prev, step: prev.targetType } : null);
+    } else if (guideTarget.step !== 'room' && !inTargetRoom) {
+      setGuideTarget(prev => prev ? { ...prev, step: 'room' } : null);
+    }
+  }, [currentRoom, guideTarget]);
+
+  // Derived: room direction glow (null when already in the correct room)
+  const guideRoomDirection = useMemo(() => {
+    if (!guideTarget || guideTarget.step !== 'room') return null;
+    return getGuideRoomDirection(currentRoom, guideTarget.targetRoom, DEFAULT_ROOM_ORDER);
+  }, [guideTarget, currentRoom]);
+
+  // Derived: carousel item highlight (only when in correct room + on 'item' step)
+  const guideHighlightId = guideTarget?.step === 'item' ? guideTarget.targetItemId : null;
+
+  // Derived: action glow (only when in correct room + on 'action' step)
+  const guideActionGlow = guideTarget?.step === 'action' ? guideTarget.targetAction : null;
+
+  // Toggle drawer: tapping same tab closes it, tapping another opens that one
+  const toggleDrawer = useCallback((drawer: DashboardDrawer) => {
+    setActiveDrawer(prev => prev === drawer ? 'none' : drawer);
+  }, []);
+  
+  // Build naddr for linking to the Pets's detail page
+  const petsNaddr = useMemo(() => nip19.naddrEncode({
+    kind: KIND_PETS_STATE,
+    pubkey: companion.event.pubkey,
+    identifier: companion.d,
+  }), [companion.event.pubkey, companion.d]);
+  
+  // Derive available stages from all companions (for daily mission filtering)
+  const availableStages = useMemo(() => {
+    const stages = new Set<'egg' | 'baby' | 'adult'>();
+    for (const c of companions) {
+      stages.add(c.stage);
+    }
+    return Array.from(stages);
+  }, [companions]);
+  
+  // Check if this Pets is currently the active floating companion
+  // If so, we hide the visual here to avoid duplication (one floating, one in-page)
+  const { companion: activeCompanion } = usePetsCompanionData();
+  const isActiveFloatingCompanion = activeCompanion?.d === companion.d;
+  
+  // Projected state with decay applied (UI-only, recalculates every 60s).
+  // Owner surfaces use decay-only — social effects are incorporated via
+  // explicit consolidation, not pre-applied projection.
+  const projectedState = useProjectedPetsState(companion);
+
+  // Clear sleep guide after companion actually enters sleeping state
+  useEffect(() => {
+    if (isSleeping && guideTarget?.targetAction === 'sleep') {
+      setGuideTarget(null);
+    }
+  }, [isSleeping, guideTarget]);
+  
+  // Measure stage overlay for ref usage
+  const stageRef = useRef<HTMLDivElement>(null);
+  
+  // Modal states (only for things that genuinely need modals)
+  const [showPhotoModal, setShowPhotoModal] = useState(false);
+  const [showHatchCeremony, setShowHatchCeremony] = useState(false);
+  const [showEvolveCeremony, setShowEvolveCeremony] = useState(false);
+  
+  // Reset hatch/evolve ceremony when switching companions
+  useEffect(() => {
+    setShowHatchCeremony(false);
+    setShowEvolveCeremony(false);
+  }, [selectedD]);
+  
+  // DEV ONLY: Emotion panel state
+  const [showEmotionPanel, setShowEmotionPanel] = useState(false);
+  
+  // DEV ONLY: Get effective emotion (dev override or base)
+  const devEmotionOverride = useEffectiveEmotion();
+  
+  // Temporary action override used by drag-to-feed / chewing flow.
+  const [actionOverrideEmotion, setActionOverrideEmotion] = useState<PetsEmotion | null>(null);
+
+  // Music/sing override — persistent while the activity is active (not auto-clearing).
+  // Separate from interactionReaction because music is a duration-based activity,
+  // not a short reward reaction.
+  const [musicOverrideEmotion, setMusicOverrideEmotion] = useState<PetsEmotion | null>(null);
+  
+  // Status-based automatic reactions (recipe-first pipeline).
+  // Uses projected stats (with decay applied) for accurate reactions.
+  // Body effects (dirt, stink) are folded into the recipe by the resolver —
+  // no separate bodyEffects prop needed.
+  //
+  // Override priority: action override > interaction reaction > music override > status reactions.
+  const currentStats = useMemo(() => ({
+    hunger: projectedState?.stats.hunger ?? companion.stats.hunger ?? 100,
+    happiness: projectedState?.stats.happiness ?? companion.stats.happiness ?? 100,
+    health: projectedState?.stats.health ?? companion.stats.health ?? 100,
+    hygiene: projectedState?.stats.hygiene ?? companion.stats.hygiene ?? 100,
+    energy: projectedState?.stats.energy ?? companion.stats.energy ?? 100,
+  }), [projectedState, companion.stats]);
+  
+  // Combined emotion override: interaction reaction wins over music.
+  const combinedEmotionOverride =
+  actionOverrideEmotion ??
+  interactionReaction.emotionOverride ??
+  musicOverrideEmotion;
+
+  const { recipe: rawStatusRecipe, recipeLabel: rawStatusRecipeLabel } = useStatusReaction({
+    stats: currentStats,
+    enabled: !isEgg, // Keep enabled during sleep so body effects still resolve
+    actionOverride: isSleeping ? null : combinedEmotionOverride,
+  });
+
+  // When sleeping, overlay the sleeping face on top of the status recipe.
+  // This keeps body effects (dirty, stink) and food icon while overriding
+  // eyes, mouth, and eyebrows with sleeping visuals.
+  const statusRecipe = isSleeping
+    ? buildSleepingRecipe(rawStatusRecipe)
+    : rawStatusRecipe;
+  const statusRecipeLabel = isSleeping ? 'sleeping' : rawStatusRecipeLabel;
+  
+  // Final recipe: dev override uses named emotion; status system uses resolved recipe
+  const hasDevOverride = isLocalhostDev() && devEmotionOverride !== 'neutral';
+  const effectiveEmotion: PetsEmotion = hasDevOverride ? devEmotionOverride : 'neutral';
+  
+  // Adoption flow modal state
+  const [showAdoptionFlow, setShowAdoptionFlow] = useState(false);
+  const [adoptionStep, setAdoptionStep] = useState<'category' | 'onboarding'>('category');
+  const [adoptionBreedCategory, setAdoptionBreedCategory] = useState<PetsBreedCategory | undefined>(undefined);
+  
+  const [usingItemId, setUsingItemId] = useState<string | null>(null);
+  
+  // Track selection modal (for changing tracks in music player)
+  const [showTrackPickerModal, setShowTrackPickerModal] = useState(false);
+  
+  // Inline activity state - only one activity can be active at a time
+  const [inlineActivity, setInlineActivity] = useState<InlineActivityState>(createNoActivity());
+  
+  // Pets reaction state - drives visual reactions to activities
+  const [petsReaction, setPetsReaction] = useState<PetsReactionState>('idle');
+  
+  // State detection for tasks
+  // Note: isEvolving prop = mutation pending state, isEvolvingState = companion in evolving state
+  const isIncubating = companion.progressionState === 'incubating';
+  const isEvolvingState = companion.progressionState === 'evolving';
+  const isBaby = companion.stage === 'baby';
+  const canStartIncubation = isEgg && !isIncubating && !isEvolvingState;
+  const canStartEvolution = isBaby && !isEvolvingState && !isIncubating;
+  
+  // Daily missions (per-user, kind 11125)
+  const dailyMissions = useDailyMissions({ availableStages, profileContent: profile?.content });
+  
+  // Hatch tasks hook - only active when incubating (egg stage)
+  // Evolution missions now come from companion (kind 31124), not dailyMissions
+  const hatchTasks = useHatchTasks(
+    isIncubating ? companion : null,
+  );
+  
+  // Evolve tasks hook - only active when evolving (baby stage)
+  // Evolution missions now come from companion (kind 31124), not dailyMissions
+  const evolveTasks = useEvolveTasks(
+    isEvolvingState ? companion : null,
+  );
+  
+  // ─── Unified Task Process Abstraction ───
+  // This hook consolidates all scattered if/else logic for hatch vs evolve tasks
+  // It provides:
+  // - Unified config (type, isActive, interactionThreshold)
+  // Start incubation hook
+  const { mutateAsync: startIncubation, isPending: isStartingIncubation } = useStartIncubation({
+    companion,
+    profile,
+    ensureCanonicalBeforeAction,
+    updateCompanionEvent,
+  });
+  
+  // Stop incubation hook
+  const { mutateAsync: stopIncubation, isPending: isStoppingIncubation } = useStopIncubation({
+    companion,
+    ensureCanonicalBeforeAction,
+    updateCompanionEvent,
+  });
+  
+  // Start evolution hook
+  const { mutateAsync: startEvolution, isPending: isStartingEvolution } = useStartEvolution({
+    companion,
+    ensureCanonicalBeforeAction,
+    updateCompanionEvent,
+  });
+  
+  // Stop evolution hook
+  const { mutateAsync: stopEvolution, isPending: isStoppingEvolution } = useStopEvolution({
+    companion,
+    ensureCanonicalBeforeAction,
+    updateCompanionEvent,
+  });
+  
+  // ─── Set as Companion ───
+  // Determines if this Pets is currently set as the user's companion
+  const isCurrentCompanion = profile?.currentCompanion === companion.d;
+  
+  // State for tracking companion update in progress
+  const [isUpdatingCompanion, setIsUpdatingCompanion] = useState(false);
+  
+  // Check if this Pets can be set as companion (must be baby or adult, not egg)
+  const canBeCompanion = companion.stage === 'baby' || companion.stage === 'adult';
+  
+  // Handler for toggling the current companion
+  const handleSetAsCompanion = useCallback(async () => {
+    if (!profile) return;
+    
+    // Validate stage when setting (not when unsetting)
+    if (!isCurrentCompanion && !canBeCompanion) {
+      toast({
+        title: 'Cannot set as companion',
+        description: 'Only hatched NOSTR PETS (baby or adult) can be set as your companion.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    
+    setIsUpdatingCompanion(true);
+    
+    try {
+      // Fetch fresh profile data from relays to avoid stale-read-then-write
+      const canonical = await ensureCanonicalBeforeAction();
+      if (!canonical) return;
+
+      let updatedTags: string[][];
+      
+      if (isCurrentCompanion) {
+        // Remove companion: filter out all current_companion tags entirely
+        updatedTags = updateNostrPetProfileTags(canonical.profileAllTags, {})
+          .filter(tag => tag[0] !== 'current_companion');
+      } else {
+        // Set companion: first remove any existing current_companion tags, then add the new one
+        const tagsWithoutCompanion = canonical.profileAllTags.filter(tag => tag[0] !== 'current_companion');
+        updatedTags = updateNostrPetProfileTags(tagsWithoutCompanion, {
+          current_companion: companion.d,
+        });
+      }
+      
+      const prev = canonical.profileEvent;
+      const event = await publishEvent({
+        kind: KIND_NOSTR_PET_PROFILE,
+        content: prev.content,
+        tags: updatedTags,
+        prev,
+      });
+      
+      updateProfileEvent(event);
+      invalidateProfile();
+      
+      toast({
+        title: isCurrentCompanion ? 'Companion unset' : 'Companion set!',
+        description: isCurrentCompanion 
+          ? `${companion.name} is no longer your companion`
+          : `${companion.name} is now your companion`,
+      });
+    } catch (error) {
+      console.error('Failed to update companion:', error);
+      toast({
+        title: 'Failed to update companion',
+        description: error instanceof Error ? error.message : 'Unknown error',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsUpdatingCompanion(false);
+    }
+  }, [profile, isCurrentCompanion, canBeCompanion, companion.d, companion.name, ensureCanonicalBeforeAction, publishEvent, updateProfileEvent, invalidateProfile]);
+  
+  // Handler for starting incubation with explicit mode from dialog
+  const handleStartIncubation = useCallback(async (mode: StartIncubationMode, stopOtherD?: string) => {
+    try {
+      await startIncubation({ mode, stopOtherD });
+    } catch (error) {
+      console.error('Failed to start incubation:', error);
+    }
+  }, [startIncubation]);
+  
+  // Handler for starting evolution
+  const handleStartEvolution = async () => {
+    try {
+      await startEvolution();
+    } catch (error) {
+      console.error('Failed to start evolution:', error);
+    }
+  };
+  
+  // Handler for stopping incubation
+  const handleStopIncubation = async () => {
+    await stopIncubation();
+  };
+  
+  // Handler for stopping evolution
+  const handleStopEvolution = async () => {
+    await stopEvolution();
+  };
+
+  // Tap the egg in the room to start or complete hatching.
+  const handleEggClick = useCallback(() => {
+    if (!isEgg) return;
+    if (!isEggOldEnough) {
+      toast({
+        title: 'Egg not ready',
+        description: `Wait until at least one Bitcoin block is mined (~10 min) before hatching. Current block: ${currentBlockHeight ?? '...'}`,
+      });
+      return;
+    }
+    if (isIncubating) {
+      setShowHatchCeremony(true);
+    } else if (canStartIncubation) {
+      handleStartIncubation('start');
+    }
+  }, [isEgg, isEggOldEnough, isIncubating, canStartIncubation, handleStartIncubation, currentBlockHeight]);
+  
+  // Handle opening a direct action (now opens inline card)
+  const handleDirectAction = (action: DirectAction) => {
+    if (action === 'play_music') {
+      setShowTrackPickerModal(true);
+    } else if (action === 'sing') {
+      setInlineActivity(createSingActivity());
+    }
+  };
+  
+  // Handle track selected from picker - creates inline music player or changes track
+  const handleTrackSelected = async (selection: SelectedTrack) => {
+    setShowTrackPickerModal(false);
+    
+    // Check if we're changing an existing track (already published) or selecting initial track
+    const isChangingTrack = inlineActivity.type === 'music' && inlineActivity.isPublished;
+    
+    if (isChangingTrack) {
+      // Just update the selection, keep isPublished: true
+      // The InlineMusicPlayer will detect the URL change and reload
+      setInlineActivity(prev => 
+        prev.type === 'music' ? { ...prev, selection } : prev
+      );
+    } else {
+      // Initial track selection - need to publish the action
+      setInlineActivity(createMusicActivity(selection));
+      
+      // Publish the action first, then playback will start after publish succeeds
+      try {
+        await onDirectAction('play_music');
+        // Mark as published so playback can begin
+        setInlineActivity(prev => 
+          prev.type === 'music' ? { ...prev, isPublished: true } : prev
+        );
+      } catch {
+        // If publish fails, close the activity
+        setInlineActivity(createNoActivity());
+      }
+    }
+  };
+  
+  // Handle confirming sing action (called from InlineSingCard)
+  const handleConfirmSing = async () => {
+    await onDirectAction('sing');
+  };
+  
+  // Handle closing inline activities
+  const handleCloseInlineActivity = () => {
+    setInlineActivity(createNoActivity());
+    setPetsReaction('idle');
+    setMusicOverrideEmotion(null);
+  };
+  
+  // Handle music playback state changes (for Pets reaction)
+  const handleMusicPlaybackStart = () => {
+    setPetsReaction('listening');
+    setMusicOverrideEmotion(getActionEmotion('music'));
+  };
+  
+  const handleMusicPlaybackStop = () => {
+    setPetsReaction('idle');
+    setMusicOverrideEmotion(null);
+  };
+  
+  // Handle sing recording state changes (for Pets reaction)
+  const handleSingRecordingStart = () => {
+    setPetsReaction('singing');
+    setMusicOverrideEmotion(getActionEmotion('sing'));
+  };
+  
+  const handleSingRecordingStop = () => {
+    setPetsReaction('idle');
+    setMusicOverrideEmotion(null);
+  };
+  
+  // Handle opening track picker to change track (from inline player)
+  const handleChangeTrack = () => {
+    setShowTrackPickerModal(true);
+  };
+  
+  // Persist evolution mission progress (debounced) to kind 31124 so it survives page refresh
+  usePersistEvolutionProgress(companion.d, updateCompanionEvent);
+
+  // Persist daily mission progress (debounced) to kind 11125 so it survives page refresh
+  usePersistDailyProgress(updateProfileEvent);
+
+  // Award sats when all daily missions are complete
+  const { mutate: awardDailySats } = useAwardDailySats(updateProfileEvent);
+  const dailySatsAwardedRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!dailyMissions.allComplete || !dailyMissions.raw) return;
+    // Only award once per date
+    const dateKey = dailyMissions.raw.date;
+    if (dailySatsAwardedRef.current === dateKey) return;
+    dailySatsAwardedRef.current = dateKey;
+    awardDailySats({ missions: dailyMissions.raw });
+  }, [dailyMissions.allComplete, dailyMissions.raw, awardDailySats]);
+
+  // Daily login coin bonus (auto-claimed once per session)
+  useDailyLoginBonus(updateProfileEvent);
+
+  // ─── Poop Cleanup sats (debounced: batch multiple pickups into one publish) ───
+  const pendingPoopSatsRef = useRef(0);
+  const poopSatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear any pending poop-sats timer on unmount to avoid leaking a setTimeout
+  // and (if it fired late) updating profile state after this dashboard is gone.
+  useEffect(() => () => {
+    if (poopSatsTimerRef.current) {
+      clearTimeout(poopSatsTimerRef.current);
+      poopSatsTimerRef.current = null;
+    }
+  }, []);
+
+  const handlePoopCleaned = useCallback(() => {
+    pendingPoopSatsRef.current += POOP_CLEANUP_REWARD;
+    toast({ title: `+${POOP_CLEANUP_REWARD} sats`, description: 'Cleaned up!' });
+
+    // Debounce: wait 1.5s after last pickup, then publish all accumulated sats
+    if (poopSatsTimerRef.current) clearTimeout(poopSatsTimerRef.current);
+    poopSatsTimerRef.current = setTimeout(async () => {
+      const satsToAdd = pendingPoopSatsRef.current;
+      pendingPoopSatsRef.current = 0;
+      if (satsToAdd <= 0 || !user?.pubkey) return;
+
+      try {
+        const { event } = await addProfileSats(nostr, publishEvent, user.pubkey, satsToAdd);
+        updateProfileEvent(event);
+      } catch (error) {
+        console.error('Failed to persist poop cleanup sats:', error);
+      }
+    }, 1500);
+  }, [nostr, publishEvent, updateProfileEvent, user?.pubkey]);
+
+  // Shared timer ref for temporary action-emotion cleanup.
+  // Used across the current feeding/item interaction paths so older timers
+  // do not clear a newer visual state.
+  const actionCleanupRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  // Handle using an item from the items tab
+  const guideTargetRef = useRef(guideTarget);
+  guideTargetRef.current = guideTarget;
+
+  // Handle tap-based item use.
+  // Non-food actions use this path from room bars, and the fridge still uses it for food for now.
+  // If the item is not owned, we auto-purchase one unit before applying it.
+  // Triggers a temporary interaction reaction based on the action type.
+  // For 'clean' actions, detects whether the Pets was visibly dirty before
+  // the action and uses 'clean_complete' if the dirt was fully removed.
+  const handleUseItemFromTab = useCallback(async (itemId: string) => {
+    const action = getActionForItem(itemId);
+    if (!action || isUsingItem) return;
+    const shopItem = getShopItemById(itemId);
+    if (!shopItem) return;
+
+    clearTimeout(actionCleanupRef.current);
+    setUsingItemId(itemId);
+
+    try {
+      // Auto-purchase if the player doesn't own the item. Pass an explicit
+      // currency so the shop hook doesn't have to guess from `price`.
+      const owned = profile?.storage.find((s) => s.itemId === itemId);
+      if (!owned || owned.quantity <= 0) {
+        const autoPurchaseCurrency: 'fiat' | 'sats' =
+          shopItem.fiatPrice !== undefined && shopItem.price === shopItem.fiatPrice
+            ? 'fiat'
+            : 'sats';
+        await purchaseItem({ itemId, price: shopItem.price, quantity: 1, currency: autoPurchaseCurrency });
+      }
+
+      // Snapshot hygiene before the action for clean_complete detection.
+      // "Visibly dirty" = hygiene below the warning threshold (< 70).
+      const wasDirtyBefore = action === 'clean'
+        && currentStats.hygiene < SEVERITY_THRESHOLDS.warning;
+
+      // Map inventory action to reaction type (feed/play/clean/medicine → reaction).
+      const reactionType = INVENTORY_TO_REACTION[action] ?? 'feed';
+
+      // For non-clean actions, trigger immediately (facial expression before action completes).
+      if (action !== 'clean') {
+        triggerInteractionReaction(reactionType);
+      }
+
+      await onUseItem(itemId, action);
+
+      // Clear guide only after the action succeeds
+      if (guideTargetRef.current?.targetItemId === itemId) setGuideTarget(null);
+
+      // For clean actions, trigger after the action succeeds so we can
+      // detect clean_complete from the updated projected stats.
+      if (action === 'clean') {
+        // After the action, the companion cache is already updated.
+        // The projected state will recalculate on next render, but we can
+        // check whether the item's hygiene effect crossed the threshold.
+        // The action result doesn't return the new hygiene value directly,
+        // so we use the item's known effect + snapshot.
+        const hygieneGain = shopItem.effect?.hygiene ?? 0;
+        const projectedHygiene = currentStats.hygiene + hygieneGain;
+        const isNowClean = projectedHygiene >= SEVERITY_THRESHOLDS.warning;
+
+        if (wasDirtyBefore && isNowClean) {
+          triggerInteractionReaction('clean_complete');
+        } else {
+          triggerInteractionReaction('clean');
+        }
+      }
+    } finally {
+      setUsingItemId(null);
+      actionCleanupRef.current = setTimeout(() => setActionOverrideEmotion(null), 1500);
+    }
+  }, [isUsingItem, onUseItem, currentStats.hygiene, triggerInteractionReaction, profile?.storage, purchaseItem]);
+
+  // ─── Food drag-to-feed ───────────────────────────────────────────────────
+  //
+  // Timing constants — tweak these to tune how the feed reward feels.
+  const CHEW_DURATION_MS = 1200;   // chewing animation before → happy
+  const CRUMB_DURATION_MS = 1200;  // how long crumb particles stay visible
+  const HAPPY_DURATION_MS = 1500;  // happy face after chewing
+  const CRUMB_Y_OFFSET = 4;      // px below the mouth center where crumbs spawn
+  const REWARD_Y_RATIO = 0.08;    // fraction of visual height from top for reward text
+  //
+  // Visual sequence:
+  //   eating (open mouth) → chewing + crumbs (CHEW_DURATION_MS) → happy (HAPPY_DURATION_MS) → null
+  // Mutation timing:  starts immediately on drop — no delay.
+  //
+  // The chewing phase is purely visual. The mutation fires right away so
+  // Nostr publishing and stat changes are not blocked by the animation.
+  // If the mutation fails, we skip the happy phase and clear the override.
+  //
+  // Race-condition strategy:
+  //   feedSeqRef  — monotonically increasing counter. Every timer and promise
+  //                 continuation captures the value at invocation and bails
+  //                 out if a newer sequence has started.
+  //   mountedRef  — set to false on unmount. All continuations check this
+  //                 before calling setState.
+
+  const [crumbBurst, setCrumbBurst] = useState<{
+    crumbX: number; crumbY: number;   // crumb particle origin (just below the mouth)
+    rewardX: number; rewardY: number; // reward text anchor (above the head)
+  } | null>(null);
+
+  const feedSeqRef = useRef(0);
+  const mountedRef = useRef(true);
+
+  // Timer refs for chew→happy transition, happy→null cleanup, crumb cleanup,
+  // and a hard safety timeout that prevents chewing from getting stuck.
+  const chewTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const happyTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const crumbTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const safetyTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+
+  const clearFeedTimers = useCallback(() => {
+    clearTimeout(actionCleanupRef.current);
+    actionCleanupRef.current = undefined;
+    clearTimeout(chewTimerRef.current);
+    chewTimerRef.current = undefined;
+    clearTimeout(happyTimerRef.current);
+    happyTimerRef.current = undefined;
+    clearTimeout(crumbTimerRef.current);
+    crumbTimerRef.current = undefined;
+    clearTimeout(safetyTimerRef.current);
+    safetyTimerRef.current = undefined;
+  }, []);
+
+  // Clean up all feed timers and mark unmounted.
+  useEffect(() => () => {
+    mountedRef.current = false;
+    clearFeedTimers();
+  }, [clearFeedTimers]);
+
+  const handleNearMouthChange = useCallback((near: boolean) => {
+    setActionOverrideEmotion(near ? 'eating' : null);
+  }, []);
+
+  /** Drag-to-feed handler: fires mutation immediately, overlays chewing
+   *  animation for CHEW_DURATION_MS, then transitions to happy if the
+   *  mutation succeeded, or clears the override on failure.
+   *
+   *  Every async continuation (timer callbacks, .then, .finally) captures
+   *  the current `seq` value and checks `seq === feedSeqRef.current` before
+   *  writing state. If a newer sequence has started (or the component
+   *  unmounted), the continuation is a no-op. */
+  const handleFeedFromDrag = useCallback((itemId: string) => {
+    const action = getActionForItem(itemId);
+    if (!action || isUsingItem) return;
+
+    // Cancel any in-flight feed animation timers from a prior sequence.
+    clearFeedTimers();
+
+    // Stamp this sequence so all continuations can verify ownership.
+    const seq = ++feedSeqRef.current;
+
+    /** Guard: returns true only when this sequence is still active and
+     *  the component is mounted. Every continuation calls this before
+     *  touching React state. */
+    const isActive = () => mountedRef.current && seq === feedSeqRef.current;
+
+    // ── Overfeed check (must run before the mutation fires) ──
+    maybeOverfeedPoop(action, companion.stats.hunger ?? 0, poopStateRef.current);
+
+    // ── Lock + visual + audio ──
+    setUsingItemId(itemId);
+    setActionOverrideEmotion('chewing');
+    playMunchSound();
+
+    // Spawn crumb particles just below the mouth, and anchor the reward
+    // text above the head.
+    //
+    // The crumb origin is read from the actual chewing-mouth element
+    // (marked with data-pets-mouth) so crumbs align with the real
+    // mouth regardless of adult variant.  Falls back to the visual
+    // bounding box ratio when the marker is absent (e.g. Owli/beak).
+    //
+    // Wrapped in requestAnimationFrame so the DOM query runs *after*
+    // React has committed the chewing mouth from the state update above.
+    // Without this, the query would see the previous eating/neutral
+    // mouth (or no marker at all) because React 18 batches setState.
+    //
+    // Reward text: always anchored above the head via the visual rect.
+    const el = document.querySelector<HTMLElement>('[data-pets-visual]');
+    if (el) {
+      requestAnimationFrame(() => {
+        if (!isActive()) return;
+
+        const r = el.getBoundingClientRect();
+        const mouthEl = el.querySelector<SVGElement>('[data-pets-mouth]');
+        let crumbOriginX: number;
+        let crumbOriginY: number;
+        if (mouthEl) {
+          const mr = mouthEl.getBoundingClientRect();
+          crumbOriginX = mr.left + mr.width / 2;
+          crumbOriginY = mr.top + mr.height / 2 + CRUMB_Y_OFFSET;
+        } else {
+          crumbOriginX = r.left + r.width * 0.5;
+          crumbOriginY = r.top + r.height * 0.67 + CRUMB_Y_OFFSET;
+        }
+
+        setCrumbBurst({
+          crumbX: crumbOriginX,
+          crumbY: crumbOriginY,
+          rewardX: r.left + r.width * 0.5,
+          rewardY: r.top + r.height * REWARD_Y_RATIO,
+        });
+        crumbTimerRef.current = setTimeout(() => {
+          if (isActive()) setCrumbBurst(null);
+        }, CRUMB_DURATION_MS);
+      });
+    }
+
+    // ── Mutation starts NOW — no delay ──
+    //
+    // Two async boundaries must both complete before the post-chew
+    // transition fires:
+    //   1. The CHEW_DURATION_MS chewing timer  (visual minimum)
+    //   2. The onUseItem promise               (mutation)
+    //
+    // `mutationResult` is 'pending' until the promise settles, then
+    // 'ok' or 'failed'. `chewDone` flips to true when the timer fires.
+    // Whichever boundary fires second sees both flags set and calls
+    // `tryTransition()`, which applies the correct emotion once.
+
+    let mutationResult: 'pending' | 'ok' | 'failed' = 'pending';
+    let chewDone = false;
+
+    /** Apply the post-chew emotion. Only called when BOTH the chew timer
+     *  has elapsed AND the mutation has settled. Guarded by isActive(). */
+    const tryTransition = () => {
+      if (!chewDone || mutationResult === 'pending') return;
+      if (!isActive()) return;
+      // Normal flow completed — cancel the safety timeout.
+      clearTimeout(safetyTimerRef.current);
+      safetyTimerRef.current = undefined;
+      if (mutationResult === 'ok') {
+        setActionOverrideEmotion('happy');
+        happyTimerRef.current = setTimeout(() => {
+          if (isActive()) setActionOverrideEmotion(null);
+        }, HAPPY_DURATION_MS);
+      } else {
+        setActionOverrideEmotion(null);
+      }
+    };
+
+    onUseItem(itemId, action).then(
+      () => {
+        mutationResult = 'ok';
+        if (isActive() && guideTarget?.targetItemId === itemId) {
+          setGuideTarget(null);
+        }
+      },
+      () => { mutationResult = 'failed'; },
+    ).finally(() => {
+      if (isActive()) setUsingItemId(null);
+      tryTransition();
+    });
+
+    // ── After chewing phase, check if mutation also settled ──
+    chewTimerRef.current = setTimeout(() => {
+      chewDone = true;
+      tryTransition();
+    }, CHEW_DURATION_MS);
+
+    // ── Hard safety timeout ──
+    // If the mutation promise never settles (network hang, relay timeout,
+    // TanStack Query edge case), chewing would stay on forever.  This
+    // forces a clear after 5 seconds regardless.  Cleared by tryTransition
+    // when the normal flow completes, and by clearFeedTimers on new
+    // sequence / unmount.
+    safetyTimerRef.current = setTimeout(() => {
+      if (isActive()) {
+        setActionOverrideEmotion(null);
+        setUsingItemId(null);
+      }
+    }, 5000);
+  }, [isUsingItem, onUseItem, guideTarget, clearFeedTimers, companion.stats.hunger, poopStateRef]);
+
+  const foodDragHook = useFoodDrag(handleFeedFromDrag, handleNearMouthChange, {
+    disabled: companion.stage === 'egg',
+    validStages: ['baby', 'adult'],
+  });
+
+  // ─── Kitchen fridge overlay (lifted here so it renders via roomOverlay, not inside the dock) ───
+  const [showFridge, setShowFridge] = useState(false);
+  // Close fridge when leaving the kitchen
+  useEffect(() => { if (currentRoom !== 'kitchen') setShowFridge(false); }, [currentRoom]);
+
+  const isKitchenDisabled = isPublishing || actionInProgress !== null || isUsingItem;
+
+  const foodItems = useMemo(() => {
+    const items = getOwnedLiveShopItems(profile).filter(i => i.type === 'food');
+    return items.map(item => ({
+      ...item,
+      statChanges: previewStatChangesWithSegments(currentStats, item.effect, companion.stage),
+    }));
+  }, [profile, currentStats, companion.stage]);
+
+  const handleFeedItem = useCallback((itemId: string) => {
+    const action = getActionForItem(itemId);
+    const hungerBeforeFeed = companion.stats.hunger ?? 0;
+    handleUseItemFromTab(itemId);
+    if (action === 'feed' && hungerBeforeFeed >= OVERFEED_THRESHOLD && Math.random() < OVERFEED_CHANCE) {
+      poopStateRef.current?.addPoop('overfeed');
+    }
+  }, [companion.stats.hunger, handleUseItemFromTab]);
+
+  // Ref for PetsRoomShell to expose its internal shovel-drag state.
+  // KitchenBar reads this to wire up the ShovelButton.
+  const shovelDragRef = useRef<ShovelDrag | null>(null);
+  
+  return (
+    <DashboardShell>
+      {/* Legacy Migration Notice */}
+      {companion.isLegacy && (
+        <div className="mx-4 mt-2 sm:mx-6 px-4 py-3 rounded-lg bg-amber-100 border border-amber-200 dark:bg-amber-950/40 dark:border-amber-800">
+          <p className="text-sm text-amber-950 dark:text-amber-100">
+            This pet uses an older format. It will be automatically upgraded on your next interaction.
+          </p>
+        </div>
+      )}
+      
+      {/* Backdrop — tapping outside the drawer collapses it */}
+      {activeDrawer !== 'none' && (
+        <div
+          className="fixed inset-0 z-[60]"
+          onClick={() => setActiveDrawer('none')}
+        />
+      )}
+
+      {/* ─── Drawer + Tab Bar — overlays the room ─── */}
+      <div className={cn(
+        'absolute left-0 right-0 z-[70] flex flex-col transition-all duration-250 ease-in-out',
+        activeDrawer === 'wallet' || activeDrawer === 'shop'
+          ? 'inset-y-0'
+          : 'top-0',
+        isFurnitureEditorOpen && 'opacity-40 pointer-events-none',
+      )}>
+        <SubHeaderBar className="relative !top-0 shrink-0" innerClassName="md:min-h-0 min-h-[50px]">
+          <TabButton label="Activity" active={activeDrawer === 'activity'} onClick={() => toggleDrawer('activity')} className="translate-y-2">
+            <span className="flex items-center gap-1.5">
+              <Activity className="size-4" />
+              <span className="text-sm">Activity</span>
+            </span>
+          </TabButton>
+          <TabButton label="Pets" active={activeDrawer === 'pets'} onClick={() => toggleDrawer('pets')} className="translate-y-0">
+            <span className="flex items-center gap-1.5">
+              <Egg className="size-4" />
+              <span className="text-sm">Pets</span>
+            </span>
+          </TabButton>
+          <TabButton label="Species" active={activeDrawer === 'species'} onClick={() => toggleDrawer('species')} className="translate-y-2">
+            <span className="flex items-center gap-1.5">
+              <Cat className="size-4" />
+              <span className="text-sm">Species</span>
+            </span>
+          </TabButton>
+          <TabButton label="Earn" active={activeDrawer === 'earn'} onClick={() => toggleDrawer('earn')} className="translate-y-0">
+            <span className="flex items-center gap-1.5">
+              <TrendingUp className="size-4" />
+              <span className="text-sm">Earn</span>
+            </span>
+          </TabButton>
+          <TabButton label="Shop" active={activeDrawer === 'shop'} onClick={() => toggleDrawer('shop')} className="translate-y-2">
+            <span className="flex items-center gap-1.5">
+              <ShoppingBag className="size-4" />
+              <span className="text-sm">Shop</span>
+            </span>
+          </TabButton>
+          <TabButton label="Wallet" active={activeDrawer === 'wallet'} onClick={() => toggleDrawer('wallet')} className="translate-y-0">
+            <span className="flex items-center gap-1.5">
+              <Wallet className="size-4" />
+              <span className="text-sm">Wallet</span>
+            </span>
+          </TabButton>
+        </SubHeaderBar>
+
+        <div
+          className={cn(
+            'bg-background/95 backdrop-blur-sm overflow-hidden transition-[max-height] duration-250 ease-in-out',
+            activeDrawer !== 'none'
+              ? activeDrawer === 'wallet' || activeDrawer === 'shop'
+                ? 'flex-1 h-full max-h-none'
+                : 'max-h-[256px]'
+              : 'max-h-0',
+          )}
+        >
+          <ScrollArea className={cn(activeDrawer === 'wallet' || activeDrawer === 'shop' ? 'h-full' : 'h-[248px]')}>
+            <div className={cn(
+              'max-w-2xl mx-auto w-full pb-4 pt-2',
+              (activeDrawer === 'wallet' || activeDrawer === 'shop') && 'h-full flex flex-col',
+            )}>
+              {activeDrawer === 'earn' && (
+                <MissionsTabContent
+                  initialPane="bao-markets"
+                  profile={profile}
+                  updateProfileEvent={updateProfileEvent}
+                  isIncubating={isIncubating}
+                  isEvolvingState={isEvolvingState}
+                  isEgg={isEgg}
+                  isBaby={isBaby}
+                  hatchTasks={hatchTasks}
+                  evolveTasks={evolveTasks}
+                  onHatch={async () => setShowHatchCeremony(true)}
+                  isHatching={isHatching || showHatchCeremony}
+                  onEvolve={async () => setShowEvolveCeremony(true)}
+                  isEvolving={isEvolving || showEvolveCeremony}
+                  isMainnetWallet={profile?.walletMode === 'cashu'}
+                  onStopIncubation={handleStopIncubation}
+                  isStoppingIncubation={isStoppingIncubation}
+                  onStopEvolution={handleStopEvolution}
+                  isStoppingEvolution={isStoppingEvolution}
+                   dailyMissions={dailyMissions}
+                  canStartIncubation={canStartIncubation}
+                  canStartEvolution={canStartEvolution}
+                  isStartingIncubation={isStartingIncubation}
+                  isStartingEvolution={isStartingEvolution}
+                  onStartIncubation={() => handleStartIncubation('start')}
+                  onStartEvolution={handleStartEvolution}
+                />
+              )}
+              {activeDrawer === 'activity' && (
+                <ActivityTabContent
+                  companion={companion}
+                  projectedStats={currentStats}
+                  socialOpen={companion.socialOpen}
+                  onToggleSocial={handleToggleSocial}
+                  isSocialToggling={isSocialToggling}
+                  isEgg={isEgg}
+                />
+              )}
+              {activeDrawer === 'pets' && (
+                <PetsTabContent
+                  companion={companion}
+                  companions={companions}
+                  selectedD={selectedD}
+                  petsNaddr={petsNaddr}
+                  onSelectPets={onSelectPets}
+                  onAdopt={() => {
+                    setAdoptionBreedCategory(undefined);
+                    setAdoptionStep('category');
+                    setShowAdoptionFlow(true);
+                  }}
+                  onDevOpenEditor={() => setShowDevEditor(true)}
+                  onDevOpenEmotionPanel={() => setShowEmotionPanel(true)}
+                  onDevInstantTransition={isEgg ? () => setShowHatchCeremony(true) : isBaby ? () => setShowEvolveCeremony(true) : undefined}
+                  isHatching={isHatching}
+                  isEvolving={isEvolving}
+                />
+              )}
+              {activeDrawer === 'species' && (
+                <SpeciesTabContent companion={companion ?? undefined} />
+              )}
+              {activeDrawer === 'shop' && (
+                <div className="flex-1 min-h-0">
+                  <PetsShopDrawer
+                    profile={profile ?? null}
+                    companion={companion}
+                    externalWallet={petsWallet}
+                    onCompanionUpdated={updateCompanionEvent}
+                  />
+                </div>
+              )}
+              {activeDrawer === 'wallet' && (
+                <div className="flex-1 min-h-0">
+                  <PetsWalletDrawer
+                    onModeChange={async (mode) => {
+                      if (!user?.pubkey || !profile) return;
+                      try {
+                        const fresh = await fetchFreshNostrPetProfile(nostr, user.pubkey);
+                        if (!fresh) return;
+                        const newTags = updateNostrPetProfileTags(fresh.allTags, { wallet_mode: mode });
+                        await publishEvent({ kind: KIND_NOSTR_PET_PROFILE, content: fresh.content, tags: newTags });
+                        await invalidateProfile();
+                        const modeLabel = mode === 'cashu' ? 'Cashu sats' : '₿AO signet';
+                        toast({ title: 'Wallet mode', description: `${modeLabel} enabled` });
+                      } catch {
+                        toast({ title: 'Wallet mode', description: 'Failed to update wallet mode', variant: 'destructive' });
+                      }
+                    }}
+                  />
+                </div>
+              )}
+            </div>
+          </ScrollArea>
+        </div>
+      </div>
+
+      {/* ─── Room View (always visible behind drawer) ─── */}
+      <PetsRoomShell
+        roomId={currentRoom}
+        headerSlot={
+          <div className="flex items-center gap-2">
+            <PetsSwapButton
+              companions={companions}
+              selectedD={selectedD}
+              currentCompanionD={profile?.currentCompanion}
+              onSelect={onSelectPets}
+            />
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="size-9 rounded-full bg-background/80 backdrop-blur-sm"
+              onClick={() => {
+                setGameMode((prev) => {
+                  const next = !prev;
+                  if (next && document.documentElement.requestFullscreen) {
+                    document.documentElement.requestFullscreen().catch(() => {});
+                  } else if (!next && document.fullscreenElement && document.exitFullscreen) {
+                    document.exitFullscreen().catch(() => {});
+                  }
+                  return next;
+                });
+              }}
+              aria-label={gameMode ? 'Exit game mode' : 'Enter game mode'}
+            >
+              {gameMode ? <Minimize className="size-4" /> : <Maximize className="size-4" />}
+            </Button>
+          </div>
+        }
+        onChangeRoom={(room) => {
+          if (isSleeping) {
+            toast({ title: 'Zzz...', description: `${companion.name} is sleeping. Wake up first!` });
+            return;
+          }
+          setStoredRoom(room);
+        }}
+        isSleeping={isSleeping}
+        hunger={currentStats.hunger}
+        lastFeedTimestamp={companion.lastInteraction ? companion.lastInteraction * 1000 : undefined}
+        poopStateRef={poopStateRef}
+        onPoopCleaned={handlePoopCleaned}
+        guideRoomDirection={guideRoomDirection}
+        hudVisible={activeDrawer === 'none'}
+        roomLayout={currentRoomLayout}
+        furniturePlacements={furnitureDraft ?? currentFurniturePlacements}
+        containerRef={roomContainerRef}
+        isFurnitureEditing={isFurnitureEditorOpen}
+        furnitureSelectedIndex={furnitureSelectedIndex}
+        onFurnitureSelect={setFurnitureSelectedIndex}
+        onFurnitureMove={handleFurnitureMove}
+        furnitureActiveLayer={furnitureActiveLayer}
+        onFurnitureBackgroundClick={handleFurnitureBackgroundClick}
+        editorSlot={
+          <PetsRoomEditorTrigger onClick={handleOpenRoomEditor} />
+        }
+        editorSlotLeft={
+          <RoomFurnitureEditorTrigger onClick={handleOpenFurnitureEditor} />
+        }
+        editorOverlay={isRoomEditorOpen ? (
+          <PetsRoomEditor
+            roomId={currentRoom}
+            currentLayout={currentRoomLayout}
+            onSave={handleSaveRoomLayout}
+            onClose={() => setIsRoomEditorOpen(false)}
+            isSaving={isSavingLayout}
+          />
+        ) : isFurnitureEditorOpen ? (
+          <RoomFurnitureEditor
+            roomId={currentRoom}
+            draft={furnitureDraft ?? []}
+            onDraftChange={setFurnitureDraft}
+            selectedIndex={furnitureSelectedIndex}
+            onSelectItem={setFurnitureSelectedIndex}
+            onClose={handleCloseFurnitureEditor}
+            onSave={handleSaveFurniture}
+            isSaving={isSavingFurniture}
+            placement={furnitureToolbarPlacement}
+          />
+        ) : undefined}
+        shovelDragRef={shovelDragRef}
+        roomOverlay={showFridge ? (
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/95 backdrop-blur-md animate-in fade-in duration-200" onClick={() => setShowFridge(false)}>
+            <div className="w-full max-w-md px-4" onClick={(e) => e.stopPropagation()}>
+              <div className="relative flex items-center justify-center mb-4">
+                <div className="flex items-center gap-2">
+                  <Refrigerator className="size-5 text-orange-500" />
+                  <h3 className="text-sm font-semibold">Fridge</h3>
+                </div>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setShowFridge(false); }}
+                  className="absolute right-0 size-8 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+                  aria-label="Close fridge"
+                >
+                  <X className="size-5" strokeWidth={4} />
+                </button>
+              </div>
+
+              <div className="flex flex-wrap justify-center gap-1">
+                {foodItems.map(item => {
+                const isThisUsing = isUsingItem && usingItemId === item.id;
+                const stock = profile?.storage.find(s => s.itemId === item.id)?.quantity ?? 0;
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => handleFeedItem(item.id)}
+                    disabled={isKitchenDisabled}
+                    className={cn(
+                      'relative flex flex-col items-center gap-1.5 p-3 rounded-2xl transition-all duration-200',
+                      'hover:bg-foreground/5 active:scale-95',
+                      isThisUsing && 'bg-foreground/5',
+                      isKitchenDisabled && !isThisUsing && 'opacity-40',
+                    )}
+                  >
+                    {stock > 0 && (
+                      <span
+                        className="absolute top-1 right-1 min-w-[1.25rem] h-5 px-1 rounded-full bg-primary text-primary-foreground text-[10px] font-bold flex items-center justify-center z-10 shadow-sm"
+                        aria-label={`Stock: ${stock}`}
+                      >
+                        {stock}
+                      </span>
+                    )}
+                    <span className="text-4xl leading-none">{item.icon}</span>
+                    <span className="text-[11px] font-medium text-foreground/80">{item.name}</span>
+                    <div className="grid grid-cols-2 gap-x-2 gap-y-0.5">
+                      {item.statChanges.map((change) => {
+                        const Icon = STAT_ICON[change.stat];
+                        const positive = change.delta > 0;
+                        const segDelta = change.segmentDelta;
+                        return (
+                          <span key={change.stat} className="flex items-center gap-0.5">
+                            {Icon && <Icon className="size-3.5 text-muted-foreground/60" />}
+                            <span className={cn('text-[11px] font-semibold tabular-nums', positive ? 'text-emerald-600 dark:text-emerald-400' : 'text-red-600 dark:text-red-400')}>
+                              {positive ? '+' : ''}{change.delta}
+                            </span>
+                            {segDelta !== 0 && (
+                              <span className="text-[9px] text-muted-foreground/70 tabular-nums">
+                                {segDelta > 0 ? '+' : ''}{segDelta}▮
+                              </span>
+                            )}
+                          </span>
+                        );
+                      })}
+                    </div>
+                    {isThisUsing && <Loader2 className="size-3.5 animate-spin text-primary absolute top-2 right-2" />}
+                  </button>
+                );
+              })}
+              </div>
+            </div>
+          </div>
+        ) : undefined}
+        hero={
+          <PetsRoomHero
+            companion={companion}
+            isActiveFloatingCompanion={isActiveFloatingCompanion}
+            isUpdatingCompanion={isUpdatingCompanion}
+            handleSetAsCompanion={handleSetAsCompanion}
+          />
+        }
+        stageOverlay={
+          !isActiveFloatingCompanion ? (
+            <PetsRoomStage
+              companion={companion}
+              currentStats={currentStats}
+              isSleeping={isSleeping}
+              isEgg={isEgg}
+              statusRecipe={statusRecipe}
+              statusRecipeLabel={statusRecipeLabel}
+              effectiveEmotion={effectiveEmotion}
+              hasDevOverride={hasDevOverride}
+              petsReaction={petsReaction}
+              interactionReaction={isEgg ? undefined : blendedInteractionReaction}
+              facing={directFacing}
+              isHovered={isDirectHovered}
+              interactionProps={directInteractionProps}
+              stageRef={stageRef}
+              onEggClick={handleEggClick}
+              eggTapEnabled={activeDrawer === 'none'}
+            />
+          ) : undefined
+        }
+        statusHud={
+          !isActiveFloatingCompanion ? (
+            <PetsRoomStatusHud
+              companion={companion}
+              currentStats={currentStats}
+              onGuide={handleGuide}
+            />
+          ) : undefined
+        }
+        middleSlot={
+          <>
+            {inlineActivity.type === 'music' && (
+              <div className="px-4 sm:px-6 pb-2">
+                <InlineMusicPlayer
+                  selection={inlineActivity.selection}
+                  onChangeTrack={handleChangeTrack}
+                  onClose={handleCloseInlineActivity}
+                  onPlaybackStart={handleMusicPlaybackStart}
+                  onPlaybackStop={handleMusicPlaybackStop}
+                  isPublished={inlineActivity.isPublished}
+                  isPublishing={isDirectActionPending}
+                />
+              </div>
+            )}
+            {inlineActivity.type === 'sing' && (
+              <div className="px-4 sm:px-6 pb-2">
+                <InlineSingCard
+                  onConfirm={handleConfirmSing}
+                  onClose={handleCloseInlineActivity}
+                  onRecordingStart={handleSingRecordingStart}
+                  onRecordingStop={handleSingRecordingStop}
+                  isPublishing={isDirectActionPending}
+                />
+              </div>
+            )}
+          </>
+        }
+      >
+        {/* Per-room bottom bar */}
+        {!isActiveFloatingCompanion && (
+          <RoomBottomBar
+            room={currentRoom}
+            companion={companion}
+            currentStats={currentStats}
+            profile={profile}
+            isEgg={isEgg}
+            isSleeping={isSleeping}
+            isUsingItem={isUsingItem}
+            usingItemId={usingItemId}
+            isPublishing={isPublishing}
+            actionInProgress={actionInProgress}
+            isDirectActionPending={isDirectActionPending}
+            isCurrentCompanion={isCurrentCompanion}
+            canBeCompanion={canBeCompanion}
+            isUpdatingCompanion={isUpdatingCompanion}
+            handleSetAsCompanion={handleSetAsCompanion}
+            handleUseItemFromTab={handleUseItemFromTab}
+            handleDirectAction={handleDirectAction}
+            onUseItem={onUseItem}
+            onRest={onRest}
+            setShowPhotoModal={setShowPhotoModal}
+            poopStateRef={poopStateRef}
+            guideHighlightId={guideHighlightId}
+            guideActionGlow={guideActionGlow}
+            foodDragHook={foodDragHook}
+            carouselKeyPrefix={`pets:carousel:${user?.pubkey ?? 'anon'}:${companion.d}`}
+            setShowFridge={setShowFridge}
+            foodItems={foodItems}
+            handleFeedItem={handleFeedItem}
+            shovelDragRef={shovelDragRef}
+          />
+        )}
+      </PetsRoomShell>
+
+      {/* ─── Food drag ghost overlay ─── */}
+      {foodDragHook.drag && (
+        <div
+          ref={foodDragHook.ghostRef}
+          className="fixed pointer-events-none z-[60]"
+          style={{
+            left: foodDragHook.drag.startX,
+            top: foodDragHook.drag.startY,
+            transform: 'translate(-50%, -50%)',
+          }}
+        >
+          <span className="text-4xl sm:text-5xl drop-shadow-lg transition-transform duration-150">
+            {foodDragHook.drag.emoji}
+          </span>
+        </div>
+      )}
+
+      {/* ─── Crumb burst overlay (chewing feedback) ─── */}
+      {crumbBurst && (
+        <CrumbBurst
+          key={feedSeqRef.current}
+          crumbX={crumbBurst.crumbX}
+          crumbY={crumbBurst.crumbY}
+          rewardX={crumbBurst.rewardX}
+          rewardY={crumbBurst.rewardY}
+        />
+      )}
+      
+      {/* ─── Dialogs (only for things that genuinely need modals) ─── */}
+
+      {/* Track Picker Modal */}
+      <PlayMusicModal
+        open={showTrackPickerModal}
+        onOpenChange={setShowTrackPickerModal}
+        onConfirm={handleTrackSelected}
+        isLoading={isDirectActionPending}
+      />
+      
+      {/* Pets Photo Modal */}
+      <PetsPhotoModal
+        open={showPhotoModal}
+        onOpenChange={setShowPhotoModal}
+        companion={companion}
+      />
+
+
+      {/* Hatch Ceremony — portaled to document.body to escape center column stacking context */}
+      {showHatchCeremony && createPortal(
+        <div className="fixed inset-0 z-[100] bg-background">
+          <PetsHatchingCeremony
+            profile={profile}
+            updateProfileEvent={updateProfileEvent}
+            updateCompanionEvent={updateCompanionEvent}
+            invalidateProfile={invalidateProfile}
+            invalidateCompanion={invalidateCompanion}
+            setStoredSelectedD={setStoredSelectedD}
+            existingCompanion={companion}
+            onComplete={() => setShowHatchCeremony(false)}
+            onExit={() => setShowHatchCeremony(false)}
+          />
+        </div>,
+        document.body,
+      )}
+
+      {/* Evolve Ceremony — portaled to document.body like the hatch ceremony */}
+      {showEvolveCeremony && createPortal(
+        <div className="fixed inset-0 z-[100] bg-background">
+          <PetsEvolveCeremony
+            companion={companion}
+            onEvolve={onEvolve}
+            onComplete={() => setShowEvolveCeremony(false)}
+          />
+        </div>,
+        document.body,
+      )}
+
+      {/* Adoption Flow Modal */}
+      <Dialog
+        open={showAdoptionFlow}
+        onOpenChange={(open) => {
+          setShowAdoptionFlow(open);
+          if (!open) {
+            setAdoptionStep('category');
+            setAdoptionBreedCategory(undefined);
+          }
+        }}
+      >
+        <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto p-0">
+          {adoptionStep === 'category' ? (
+            <BreedCategoryPicker
+              compact
+              onSelectCategory={(cat) => {
+                setAdoptionBreedCategory(cat);
+                setAdoptionStep('onboarding');
+              }}
+            />
+          ) : (
+            <PetsAdoptionFlowPortal
+              profile={profile}
+              updateProfileEvent={updateProfileEvent}
+              updateCompanionEvent={updateCompanionEvent}
+              invalidateProfile={invalidateProfile}
+              invalidateCompanion={invalidateCompanion}
+              setStoredSelectedD={setStoredSelectedD}
+              breedCategory={adoptionBreedCategory}
+              onComplete={() => setShowAdoptionFlow(false)}
+            />
+          )}
+        </DialogContent>
+      </Dialog>
+      
+      {/* DEV ONLY: State Editor */}
+      {import.meta.env.DEV && (
+        <PetsDevEditor
+          isOpen={showDevEditor}
+          onClose={() => setShowDevEditor(false)}
+          companion={companion}
+          onApply={onDevEditorApply}
+          isUpdating={isDevUpdating}
+          onResetDailyMissions={() => {
+            dailyMissions.forceReset();
+            window.dispatchEvent(new CustomEvent('daily-missions-updated', { detail: { devReset: true } }));
+          }}
+        />
+      )}
+      
+      {/* DEV ONLY: Emotion Tester */}
+      {import.meta.env.DEV && (
+        <PetsEmotionPanel
+          isOpen={showEmotionPanel}
+          onClose={() => setShowEmotionPanel(false)}
+        />
+      )}
+    </DashboardShell>
+  );
+}
+
+// ─── Room Bottom Bar ──────────────────────────────────────────────────────────
+
+interface RoomBottomBarProps {
+  room: PetsRoomId;
+  companion: PetsCompanion;
+  /** Projected stats (decay-applied) matching what the stat rings display. */
+  currentStats: PetsStats;
+  profile: NostrPetProfile | null;
+  isEgg: boolean;
+  isSleeping: boolean;
+  isUsingItem: boolean;
+  usingItemId: string | null;
+  isPublishing: boolean;
+  actionInProgress: string | null;
+  isDirectActionPending: boolean;
+  isCurrentCompanion: boolean;
+  canBeCompanion: boolean;
+  isUpdatingCompanion: boolean;
+  handleSetAsCompanion: () => Promise<void>;
+  handleUseItemFromTab: (itemId: string) => void;
+  handleDirectAction: (action: DirectAction) => void;
+  onUseItem: (itemId: string, action: InventoryAction) => Promise<void>;
+  onRest: () => void;
+  setShowPhotoModal: React.Dispatch<React.SetStateAction<boolean>>;
+  poopStateRef: React.MutableRefObject<PoopState | null>;
+  /** Item ID to highlight in the carousel (guide flow). */
+  guideHighlightId?: string | null;
+  /** Action to glow (guide flow, e.g. 'sleep'). */
+  guideActionGlow?: string | null;
+  /** Food drag hook for drag-to-feed in the kitchen. */
+  foodDragHook?: UseFoodDragReturn;
+  /** localStorage key prefix for carousel focus persistence (pubkey:petsD). */
+  carouselKeyPrefix: string;
+  // ── Kitchen-specific (passed through to KitchenBar) ──
+  /** Open/close fridge overlay (rendered at shell level via roomOverlay). */
+  setShowFridge?: React.Dispatch<React.SetStateAction<boolean>>;
+  /** Pre-computed food items with stat change previews. */
+  foodItems?: Array<ReturnType<typeof getLiveShopItems>[number] & { statChanges: ReturnType<typeof previewStatChangesWithSegments> }>;
+  /** Feed handler with overfeed-poop logic. */
+  handleFeedItem?: (itemId: string) => void;
+  /** Shovel drag ref exposed by PetsRoomShell. */
+  shovelDragRef?: React.MutableRefObject<ShovelDrag | null>;
+}
+
+function RoomBottomBar(props: RoomBottomBarProps) {
+  switch (props.room) {
+    case 'home': return <HomeBar {...props} />;
+    case 'kitchen': return <KitchenBar {...props} />;
+    case 'care': return <CareBar {...props} />;
+    case 'rest': return <RestBar {...props} />;
+    case 'closet': return <ClosetBar />;
+  }
+}
+
+// ── Home: toys + music/sing, photo left, companion right ──
+
+function HomeBar({
+  isUsingItem,
+  usingItemId,
+  isPublishing,
+  actionInProgress,
+  isCurrentCompanion,
+  canBeCompanion,
+  isUpdatingCompanion,
+  handleSetAsCompanion,
+  handleUseItemFromTab,
+  handleDirectAction,
+  setShowPhotoModal,
+  profile,
+  guideHighlightId,
+  carouselKeyPrefix,
+}: RoomBottomBarProps) {
+  const { user } = useCurrentUser();
+  const [storedFocusId, setStoredFocusId] = useLocalStorage<string | null>(`${carouselKeyPrefix}:home`, null);
+  const handleFocusChange = useCallback((entry: CarouselEntry) => setStoredFocusId(entry.id), [setStoredFocusId]);
+
+  const carouselItems = useMemo<CarouselEntry[]>(() => {
+    const toys = getOwnedLiveShopItems(profile)
+      .filter(i => i.type === 'toy')
+      .map(i => ({ id: i.id, icon: <span>{i.icon}</span>, label: i.name, meta: `${i.price} sats` }));
+    return [
+      ...toys,
+      {
+        id: '__action_music',
+        icon: <div className="size-10 sm:size-12 rounded-full flex items-center justify-center bg-pink-500/15 text-pink-500"><Music className="size-5 sm:size-6" /></div>,
+        label: 'Music',
+      },
+      {
+        id: '__action_sing',
+        icon: <div className="size-10 sm:size-12 rounded-full flex items-center justify-center bg-purple-500/15 text-purple-500"><Mic className="size-5 sm:size-6" /></div>,
+        label: 'Sing',
+      },
+    ];
+  }, [profile]);
+
+  const isDisabled = isPublishing || actionInProgress !== null || isUsingItem;
+
+  const handleCarouselUse = useCallback((id: string) => {
+    if (id === '__action_music') handleDirectAction('play_music');
+    else if (id === '__action_sing') handleDirectAction('sing');
+    else handleUseItemFromTab(id);
+  }, [handleDirectAction, handleUseItemFromTab]);
+
+  return (
+    <>
+      <div className={ROOM_BOTTOM_BAR_CLASS}>
+        <div className="flex items-center justify-between gap-1 sm:gap-3">
+          <RoomActionButton
+            icon={<Camera className="size-7 sm:size-9" />}
+            label="Photo"
+            color="text-pink-500"
+            glowHex="#ec4899"
+            onClick={() => {
+              setShowPhotoModal(true);
+              trackDailyMissionProgress('take_photo', 1, user?.pubkey);
+            }}
+          />
+          <div className="flex-1 min-w-0 flex justify-center">
+            <ItemCarousel
+              items={carouselItems}
+              onUse={handleCarouselUse}
+              activeItemId={isUsingItem ? usingItemId : null}
+              disabled={isDisabled}
+              highlightId={guideHighlightId}
+              initialItemId={storedFocusId ?? undefined}
+              onFocusChange={handleFocusChange}
+            />
+          </div>
+          {canBeCompanion ? (
+            <RoomActionButton
+              icon={<Footprints className="size-7 sm:size-9" />}
+              label={isCurrentCompanion ? 'With you' : 'Take along'}
+              color={isCurrentCompanion ? 'text-emerald-500' : 'text-violet-500'}
+              glowHex={isCurrentCompanion ? '#10b981' : '#8b5cf6'}
+              onClick={handleSetAsCompanion}
+              disabled={isUpdatingCompanion}
+              loading={isUpdatingCompanion}
+            />
+          ) : (
+            <div className="w-14 sm:w-20 shrink-0" />
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Kitchen: food carousel, shovel left (if poop), fridge right ──
+
+/** Lucide icon for each stat key */
+const STAT_ICON: Record<string, React.ComponentType<{ className?: string }>> = {
+  hunger: Utensils,
+  happiness: Gamepad2,
+  health: Heart,
+  hygiene: Droplets,
+  energy: Zap,
+};
+
+/**
+ * Shared overfeed check.  Call synchronously at the moment of feeding,
+ * before the mutation fires, so `hungerBefore` captures the pre-feed value.
+ *
+ * Both the tap-to-feed (`handleFeedItem`) and drag-to-feed
+ * (`handleFeedFromDrag`) paths must call this to keep poop behaviour
+ * consistent.
+ */
+function maybeOverfeedPoop(
+  action: string | null | undefined,
+  hungerBefore: number,
+  poopState: PoopState | null,
+): void {
+  if (
+    action === 'feed' &&
+    hungerBefore >= OVERFEED_THRESHOLD &&
+    Math.random() < OVERFEED_CHANCE
+  ) {
+    poopState?.addPoop('overfeed');
+  }
+}
+
+function KitchenBar({
+  companion,
+  currentStats,
+  profile,
+  isUsingItem,
+  usingItemId,
+  isPublishing,
+  actionInProgress,
+  handleUseItemFromTab,
+  poopStateRef,
+  guideHighlightId,
+  guideActionGlow,
+  foodDragHook,
+  carouselKeyPrefix,
+  setShowFridge,
+  foodItems,
+  handleFeedItem: _handleFeedItem,
+  shovelDragRef,
+}: RoomBottomBarProps) {
+  const [storedFocusId, setStoredFocusId] = useLocalStorage<string | null>(`${carouselKeyPrefix}:kitchen`, null);
+  const handleFocusChange = useCallback((entry: CarouselEntry) => setStoredFocusId(entry.id), [setStoredFocusId]);
+  const drag = shovelDragRef?.current;
+
+  // Energy drink item (tap-only, no drag, no overfeed)
+  const energyDrinkItems = useMemo(() => {
+    const items = getOwnedLiveShopItems(profile).filter(i => i.id === 'nrg_drink');
+    return items.map(item => ({
+      ...item,
+      statChanges: previewStatChangesWithSegments(currentStats, item.effect, companion.stage),
+    }));
+  }, [profile, currentStats, companion.stage]);
+
+  // Combined items for the fridge grid (food + energy drink)
+  const allKitchenItems = useMemo(() => [...(foodItems ?? []), ...energyDrinkItems], [foodItems, energyDrinkItems]);
+
+  // Combined carousel entries (food + energy drink)
+  const kitchenEntries = useMemo<CarouselEntry[]>(() =>
+    allKitchenItems.map(i => ({ id: i.id, icon: <span>{i.icon}</span>, label: i.name, meta: `${i.price} sats` })),
+  [allKitchenItems]);
+
+  // Set of food item IDs for quick lookup (overfeed only for these)
+  const foodIdSet = useMemo(() => new Set((foodItems ?? []).map(i => i.id)), [foodItems]);
+
+  // All draggable kitchen items (food + energy drink) — used for drag eligibility
+  const ingestibleIdSet = useMemo(
+    () => new Set(allKitchenItems.map(i => i.id)),
+    [allKitchenItems],
+  );
+
+  const isDisabled = isPublishing || actionInProgress !== null || isUsingItem;
+
+  // Unified kitchen item handler: food items get overfeed check, energy items use plain tap.
+  const handleKitchenItem = useCallback((itemId: string) => {
+    if (foodIdSet.has(itemId)) {
+      const action = getActionForItem(itemId);
+      maybeOverfeedPoop(action, companion.stats.hunger ?? 0, poopStateRef.current);
+    }
+    handleUseItemFromTab(itemId);
+  }, [companion.stats.hunger, handleUseItemFromTab, foodIdSet, poopStateRef]);
+
+  // Build pointer-down handler for ingestible item drag-to-feed.
+  // Engages for all ingestible kitchen items (food + energy drink).
+  const centerPointerHandlers = useMemo(() => {
+    if (!foodDragHook || kitchenEntries.length === 0 || isDisabled) return undefined;
+    const { onDragStart: start } = foodDragHook;
+    return {
+      onPointerDown: (e: React.PointerEvent, entry: CarouselEntry) => {
+        if (!ingestibleIdSet.has(entry.id)) return;
+        const rawItem = allKitchenItems.find(i => i.id === entry.id);
+        start(e, entry.id, rawItem?.icon ?? '🍽');
+      },
+    };
+  }, [foodDragHook, kitchenEntries.length, allKitchenItems, ingestibleIdSet, isDisabled]);
+
+  return (
+    <div className={ROOM_BOTTOM_BAR_CLASS}>
+      <div className="flex items-center justify-between gap-1 sm:gap-3">
+        {drag && <ShovelButton drag={drag} guideActionGlow={guideActionGlow} />}
+        <div className="flex-1 min-w-0 flex justify-center">
+          <ItemCarousel
+            items={kitchenEntries}
+            onUse={handleKitchenItem}
+            activeItemId={isUsingItem ? usingItemId : null}
+            centerPointerHandlers={centerPointerHandlers}
+            disabled={isDisabled}
+            highlightId={guideHighlightId}
+            initialItemId={storedFocusId ?? undefined}
+            onFocusChange={handleFocusChange}
+          />
+        </div>
+        <RoomActionButton
+          icon={<Refrigerator className="size-7 sm:size-9" />}
+          label="Fridge"
+          color="text-orange-500"
+          glowHex="#f97316"
+          onClick={() => setShowFridge?.(true)}
+          disabled={isDisabled}
+        />
+      </div>
+    </div>
+  );
+}
+
+// ── Care: hygiene + medicine carousel, context-sensitive side buttons ──
+
+function CareBar({
+  isUsingItem,
+  usingItemId,
+  isPublishing,
+  actionInProgress,
+  profile,
+  handleUseItemFromTab,
+  guideHighlightId,
+  carouselKeyPrefix,
+}: RoomBottomBarProps) {
+  const ownedItems = useMemo(() => getOwnedLiveShopItems(profile), [profile]);
+  const hygieneItems = useMemo(() => ownedItems.filter(i => i.type === 'hygiene'), [ownedItems]);
+  const treatItem = useMemo(() => ownedItems.find(i => i.type === 'food'), [ownedItems]);
+
+  const carouselEntries = useMemo<CarouselEntry[]>(() => {
+    const hygiene = hygieneItems
+      .filter(i => i.id !== 'hyg_towel')
+      .map(i => ({ id: i.id, icon: <span>{i.icon}</span>, label: i.name, meta: 'hygiene' }));
+    const medicine = ownedItems
+      .filter(i => i.type === 'medicine')
+      .map(i => ({ id: i.id, icon: <span>{i.icon}</span>, label: i.name, meta: 'medicine' }));
+    return [...hygiene, ...medicine];
+  }, [hygieneItems, ownedItems]);
+
+  const [storedFocusId, setStoredFocusId] = useLocalStorage<string | null>(`${carouselKeyPrefix}:care`, null);
+  const [focusedMeta, setFocusedMeta] = useState(() => {
+    if (storedFocusId) {
+      const stored = carouselEntries.find(e => e.id === storedFocusId);
+      if (stored) return stored.meta ?? 'hygiene';
+    }
+    return carouselEntries[0]?.meta ?? 'hygiene';
+  });
+
+  // Sync focusedMeta when storedFocusId changes after mount (e.g. Pets switch).
+  useEffect(() => {
+    if (!storedFocusId) return;
+    const stored = carouselEntries.find(e => e.id === storedFocusId);
+    if (stored) setFocusedMeta(stored.meta ?? 'hygiene');
+  }, [storedFocusId, carouselEntries]);
+
+  const handleFocusChange = useCallback((entry: CarouselEntry) => {
+    setFocusedMeta(entry.meta ?? 'hygiene');
+    setStoredFocusId(entry.id);
+  }, [setStoredFocusId]);
+  const isHygieneFocused = focusedMeta === 'hygiene';
+  const isDisabled = isPublishing || actionInProgress !== null || isUsingItem;
+  const towelItem = hygieneItems.find(i => i.id === 'hyg_towel');
+
+  const leftButton = isHygieneFocused ? (
+    towelItem ? (
+      <RoomActionButton
+        icon={<TowelRack className="size-7 sm:size-9" />}
+        label="Towel"
+        color="text-cyan-500"
+        glowHex="#06b6d4"
+        onClick={() => handleUseItemFromTab(towelItem.id)}
+        disabled={isDisabled}
+        loading={isUsingItem && usingItemId === towelItem.id}
+      />
+    ) : (
+      <div className="w-14 sm:w-20 shrink-0" />
+    )
+  ) : treatItem ? (
+    <RoomActionButton
+      icon={<Candy className="size-7 sm:size-9" />}
+      label={treatItem.name}
+      color="text-pink-400"
+      glowHex="#f472b6"
+      onClick={() => handleUseItemFromTab(treatItem.id)}
+      disabled={isDisabled}
+    />
+  ) : (
+    <div className="w-14 sm:w-20 shrink-0" />
+  );
+
+  return (
+    <>
+      <div className={ROOM_BOTTOM_BAR_CLASS}>
+        <div className="flex items-center justify-between gap-1 sm:gap-3">
+          {leftButton}
+          <div className="flex-1 min-w-0 flex justify-center">
+            <ItemCarousel
+              items={carouselEntries}
+              onUse={handleUseItemFromTab}
+              activeItemId={isUsingItem ? usingItemId : null}
+              disabled={isDisabled}
+              onFocusChange={handleFocusChange}
+              highlightId={guideHighlightId}
+              initialItemId={storedFocusId ?? undefined}
+            />
+          </div>
+          {isHygieneFocused ? (
+            <RoomActionButton
+              icon={<ShowerHead className="size-7 sm:size-9" />}
+              label="Shower"
+              color="text-blue-500"
+              glowHex="#3b82f6"
+              onClick={() => {
+                const shampoo = hygieneItems.find(i => i.id === 'hyg_shampoo');
+                if (shampoo) handleUseItemFromTab(shampoo.id);
+              }}
+              disabled={isDisabled}
+            />
+          ) : (
+            <div className="w-14 sm:w-20 shrink-0" />
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Rest: sleep/wake button centered ──
+
+function RestBar({ isEgg, isSleeping, onRest, isPublishing, actionInProgress, isUsingItem, guideActionGlow }: RoomBottomBarProps) {
+  const isDisabled = isPublishing || actionInProgress !== null || isUsingItem;
+
+  return (
+    <>
+      <div className={ROOM_BOTTOM_BAR_CLASS}>
+        <div className="flex items-center justify-between gap-1 sm:gap-3">
+          {/* Left: spacer for visual balance */}
+          <div className="size-14 sm:size-16" />
+          {/* Center: Sleep/Wake */}
+          {!isEgg ? (
+            <RoomActionButton
+              icon={
+                actionInProgress === 'rest'
+                  ? <Loader2 className="size-7 sm:size-9 animate-spin" />
+                  : isSleeping
+                    ? <Sun className="size-7 sm:size-9" />
+                    : <Moon className="size-7 sm:size-9" />
+              }
+              label={isSleeping ? 'Wake up' : 'Sleep'}
+              color={isSleeping ? 'text-amber-500' : 'text-violet-500'}
+              glowHex={isSleeping ? '#f59e0b' : '#8b5cf6'}
+              onClick={onRest}
+              disabled={isDisabled}
+              glow={guideActionGlow === 'sleep'}
+            />
+          ) : null}
+          {/* Right: spacer for visual balance */}
+          <div className="size-14 sm:size-16" />
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── Closet: placeholder ──
+
+function ClosetBar() {
+  return (
+    <div className={ROOM_BOTTOM_BAR_CLASS}>
+      <div className="flex items-center justify-center gap-2 py-1">
+        <p className="text-xs text-muted-foreground/40 font-medium">Closet coming soon</p>
+      </div>
+    </div>
+  );
+}
+
+// ─── Missions Tab Content ─────────────────────────────────────────────────────
+
+interface MissionsTabContentProps {
+  initialPane?: QuestPane;
+  profile: NostrPetProfile | null;
+  updateProfileEvent: (event: import('@nostrify/nostrify').NostrEvent) => void;
+  isIncubating: boolean;
+  isEvolvingState: boolean;
+  isEgg: boolean;
+  isBaby: boolean;
+  hatchTasks: ReturnType<typeof useHatchTasks>;
+  evolveTasks: ReturnType<typeof useEvolveTasks>;
+  onHatch: () => Promise<void>;
+  isHatching: boolean;
+  onEvolve: () => Promise<void>;
+  isEvolving: boolean;
+  /** False in demo (BAO signet) mode: adult evolution is a mainnet feature. */
+  isMainnetWallet: boolean;
+  onStopIncubation: () => Promise<void>;
+  isStoppingIncubation: boolean;
+  onStopEvolution: () => Promise<void>;
+  isStoppingEvolution: boolean;
+  dailyMissions: ReturnType<typeof useDailyMissions>;
+  canStartIncubation: boolean;
+  canStartEvolution: boolean;
+  isStartingIncubation: boolean;
+  isStartingEvolution: boolean;
+  onStartIncubation: () => void;
+  onStartEvolution: () => void;
+}
+
+type QuestPane = 'journey' | 'bounties' | 'bao-markets';
+
+function MissionsTabContent({
+  initialPane,
+  profile,
+  updateProfileEvent,
+  isIncubating,
+  isEvolvingState,
+  isEgg,
+  isBaby,
+  hatchTasks,
+  evolveTasks,
+  onHatch,
+  isHatching,
+  onEvolve,
+  isEvolving,
+  isMainnetWallet,
+  onStopIncubation,
+  isStoppingIncubation,
+  onStopEvolution,
+  isStoppingEvolution,
+  dailyMissions,
+  canStartIncubation,
+  canStartEvolution,
+  isStartingIncubation,
+  isStartingEvolution,
+  onStartIncubation,
+  onStartEvolution,
+}: MissionsTabContentProps) {
+  const [pane, setPane] = useState<QuestPane>(initialPane ?? 'journey');
+  const hasActiveProcess = (isIncubating && isEgg) || (isEvolvingState && isBaby);
+  const isProcessBusy = isHatching || isEvolving || isStoppingIncubation || isStoppingEvolution;
+  // Demo (BAO signet) mode: adult evolution is a mainnet feature. Show the
+  // lock up front instead of letting the user invest in evolve tasks first.
+  const showEvolveLockedToast = () => {
+    toast({
+      title: '\u{1F512} Adult evolution is a Mainnet feature',
+      description:
+        'Switch to Mainnet (Cashu sats) in the Wallet tab to grow your NOSTR PET into an adult. Demo pets stay babies — everything else is free to play.',
+    });
+  };
+
+  const tasks = isIncubating ? hatchTasks.tasks : evolveTasks.tasks;
+  const allCompleted = isIncubating ? hatchTasks.allCompleted : evolveTasks.allCompleted;
+  const isLoading = isIncubating ? hatchTasks.isLoading : evolveTasks.isLoading;
+  const navigate = useNavigate();
+
+  const completedCount = tasks.filter(t => t.completed).length;
+  const totalCount = tasks.length;
+
+  const { missions } = dailyMissions;
+  const dailyCompleted = missions.filter(m => m.complete).length;
+  const dailyTotal = missions.length;
+
+  return (
+    <div className="flex flex-col h-full px-3 sm:px-4">
+      {/* ── Pill toggle ── */}
+      <div className="flex justify-center py-2">
+        <div className="inline-flex rounded-full bg-muted/50 p-1 gap-0.5">
+          <button
+            onClick={() => setPane('journey')}
+            className={cn(
+              'flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition-all duration-200',
+              pane === 'journey'
+                ? 'bg-background shadow-sm text-foreground'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <Egg className="size-3.5" />
+            Journey
+            {hasActiveProcess && (
+              <span className="text-[10px] tabular-nums text-muted-foreground">{completedCount}/{totalCount}</span>
+            )}
+          </button>
+          <button
+            onClick={() => setPane('bounties')}
+            className={cn(
+              'flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition-all duration-200',
+              pane === 'bounties'
+                ? 'bg-background shadow-sm text-foreground'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <Target className="size-3.5" />
+            Bounties
+            {dailyTotal > 0 && (
+              <span className="text-[10px] tabular-nums text-muted-foreground">{dailyCompleted}/{dailyTotal}</span>
+            )}
+          </button>
+          <button
+            onClick={() => setPane('bao-markets')}
+            className={cn(
+              'flex items-center gap-1.5 px-4 py-1.5 rounded-full text-xs font-semibold transition-all duration-200',
+              pane === 'bao-markets'
+                ? 'bg-background shadow-sm text-foreground'
+                : 'text-muted-foreground hover:text-foreground',
+            )}
+          >
+            <TrendingUp className="size-3.5" />
+            ₿AO MARKETS activity
+          </button>
+        </div>
+      </div>
+
+      {/* ── Content area ── */}
+      <div className="flex-1 min-h-0 overflow-y-auto space-y-1">
+        {pane === 'journey' && (
+          <>
+            {/* Loading */}
+            {isLoading && (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="size-5 animate-spin text-muted-foreground" />
+              </div>
+            )}
+
+            {/* Active task rows */}
+            {hasActiveProcess && !isLoading && tasks.map(task => {
+              const handleAction = () => {
+                if (!task.action || !task.actionTarget) return;
+                switch (task.action) {
+                  case 'navigate': navigate(task.actionTarget); break;
+                   case 'external_link': openUrl(task.actionTarget); break;
+                }
+              };
+              const isActionable = !task.completed && !!task.action && !!task.actionTarget;
+              return (
+                <button
+                  key={task.id}
+                  onClick={isActionable ? handleAction : undefined}
+                  disabled={!isActionable}
+                  className={cn(
+                    'w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl transition-all text-left',
+                    isActionable && 'hover:bg-accent/50 active:scale-[0.98] cursor-pointer',
+                    !isActionable && 'cursor-default',
+                  )}
+                >
+                  <QuestTaskIcon taskId={task.id} completed={task.completed} />
+                  <div className="flex-1 min-w-0">
+                    <p className={cn('text-sm font-medium leading-tight', task.completed && 'text-muted-foreground line-through')}>{task.name}</p>
+                    <p className="text-[10px] text-muted-foreground leading-snug mt-0.5 line-clamp-1">{task.description}</p>
+                  </div>
+                  {task.required > 1 && !task.completed && (
+                    <span className="text-[10px] tabular-nums font-medium text-muted-foreground shrink-0">{task.current}/{task.required}</span>
+                  )}
+                </button>
+              );
+            })}
+
+            {/* Hatch / Evolve CTA */}
+            {hasActiveProcess && allCompleted && !isLoading && (
+              <button
+                onClick={isIncubating ? onHatch : (isMainnetWallet ? onEvolve : showEvolveLockedToast)}
+                disabled={isProcessBusy}
+                className={cn(
+                  'w-full flex items-center justify-center gap-2 px-6 py-3 mt-1 rounded-full text-white font-semibold transition-all duration-300',
+                  'hover:-translate-y-0.5 hover:scale-105 hover:brightness-110 active:scale-95',
+                  isProcessBusy && 'opacity-50 pointer-events-none',
+                )}
+                style={{
+                  background: isIncubating
+                    ? 'linear-gradient(135deg, #0ea5e9, #8b5cf6)'
+                    : 'linear-gradient(135deg, #8b5cf6, #ec4899)',
+                }}
+              >
+                {(isHatching || isEvolving) ? (
+                  <Loader2 className="size-5 animate-spin" />
+                ) : (!isIncubating && !isMainnetWallet) ? (
+                  <Lock className="size-5" />
+                ) : (
+                  <span className="text-lg">{isIncubating ? '\uD83D\uDC23' : '\u2728'}</span>
+                )}
+                <span>{(isHatching || isEvolving) ? (isIncubating ? 'Hatching...' : 'Evolving...') : (isIncubating ? 'Hatch!' : 'Evolve!')}</span>
+              </button>
+            )}
+
+            {/* Stop process */}
+            {hasActiveProcess && !isLoading && (
+              <button
+                onClick={isIncubating ? onStopIncubation : onStopEvolution}
+                disabled={isProcessBusy}
+                className="w-full text-center text-[11px] text-muted-foreground/40 hover:text-destructive/60 transition-colors pt-1"
+              >
+                {(isStoppingIncubation || isStoppingEvolution) ? 'Stopping...' : `Stop ${isIncubating ? 'incubation' : 'evolution'}`}
+              </button>
+            )}
+
+            {/* No active process */}
+            {!hasActiveProcess && !isLoading && (
+              <div className="flex flex-col items-center gap-3 py-4">
+                {(canStartIncubation || canStartEvolution) ? (
+                  <button
+                    onClick={canStartIncubation ? onStartIncubation : (isMainnetWallet ? onStartEvolution : showEvolveLockedToast)}
+                    disabled={isStartingIncubation || isStartingEvolution}
+                    className={cn(
+                      'flex items-center justify-center gap-2 px-8 py-3 rounded-full text-white font-semibold transition-all duration-300',
+                      'hover:-translate-y-0.5 hover:scale-105 hover:brightness-110 active:scale-95',
+                      (isStartingIncubation || isStartingEvolution) && 'opacity-50 pointer-events-none',
+                    )}
+                    style={{
+                      background: canStartIncubation
+                        ? 'linear-gradient(135deg, #0ea5e9, #8b5cf6)'
+                        : 'linear-gradient(135deg, #8b5cf6, #ec4899)',
+                    }}
+                  >
+                    {(isStartingIncubation || isStartingEvolution) ? (
+                      <Loader2 className="size-5 animate-spin" />
+                    ) : (!canStartIncubation && !isMainnetWallet) ? (
+                      <Lock className="size-5" />
+                    ) : (
+                      <Sparkles className="size-5" />
+                    )}
+                    <span>{canStartIncubation ? 'Begin Hatching' : 'Begin Evolution'}</span>
+                  </button>
+                ) : (
+                  <p className="text-xs text-muted-foreground/50">No journey available right now</p>
+                )}
+              </div>
+            )}
+          </>
+        )}
+
+        {pane === 'bounties' && (
+          <>
+            {dailyMissions.isLoading && (
+              <div className="flex flex-col items-center gap-2 py-6 text-center">
+                <p className="text-xs text-muted-foreground/50">Loading daily bounties...</p>
+              </div>
+            )}
+
+            {!dailyMissions.isLoading && dailyMissions.noMissionsAvailable && (
+              <div className="flex flex-col items-center gap-2 py-6 text-center">
+                <Egg className="size-6 text-muted-foreground/30" />
+                <p className="text-xs text-muted-foreground">Hatch a NOSTR PET to unlock daily bounties</p>
+              </div>
+            )}
+
+            {!dailyMissions.noMissionsAvailable && !dailyMissions.isLoading && missions.map(mission => (
+              <div
+                key={mission.id}
+                className={cn(
+                  'w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl transition-all',
+                  mission.complete && 'bg-emerald-500/[0.06]',
+                )}
+              >
+                <DailyMissionIcon action={mission.action} complete={mission.complete} />
+                <div className="flex-1 min-w-0">
+                  <p className={cn('text-sm font-medium leading-tight', mission.complete && 'text-muted-foreground')}>{mission.title}</p>
+                  <p className="text-[10px] text-muted-foreground leading-snug mt-0.5">{mission.description}</p>
+                </div>
+                {!mission.complete && (
+                  <span className="text-[10px] tabular-nums font-medium text-muted-foreground shrink-0">{mission.progress}/{mission.target}</span>
+                )}
+                {mission.complete && (
+                  <span className="text-[10px] font-medium text-emerald-600 dark:text-emerald-400 shrink-0">+{mission.satsReward.toLocaleString()} sats</span>
+                )}
+              </div>
+            ))}
+
+            {/* Bonus row */}
+            {!dailyMissions.noMissionsAvailable && !dailyMissions.isLoading && dailyMissions.bonusUnlocked && (
+              <div className="w-full flex items-center gap-3 px-3 py-2.5 rounded-2xl bg-violet-500/[0.06]">
+                <div className="size-8 rounded-full bg-violet-500/15 flex items-center justify-center shrink-0">
+                  <Sparkles className="size-4 text-violet-500" />
+                </div>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-medium leading-tight">Daily Champion</p>
+                  <p className="text-[10px] text-muted-foreground">All missions complete!</p>
+                </div>
+                <span className="text-[10px] font-medium text-violet-600 dark:text-violet-400 shrink-0">+{dailyMissions.bonusSats.toLocaleString()} sats</span>
+              </div>
+            )}
+
+            {!dailyMissions.noMissionsAvailable && !dailyMissions.isLoading && dailyCompleted === dailyTotal && dailyTotal > 0 && dailyMissions.allComplete && (
+              <div className="flex flex-col items-center gap-1 py-4 text-center">
+                <Sparkles className="size-5 text-primary/40" />
+                <p className="text-xs text-muted-foreground">All done for today — come back tomorrow!</p>
+              </div>
+            )}
+          </>
+        )}
+
+        {pane === 'bao-markets' && (
+          <BaoMarketsQuestContent profile={profile} updateProfileEvent={updateProfileEvent} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Quest task icon ──────────────────────────────────────────────────────────
+
+function QuestTaskIcon({ taskId, completed }: { taskId: string; completed: boolean }) {
+  const iconClass = 'size-4';
+  const icon = (() => {
+    switch (taskId) {
+      case 'create_themes': return <Sparkles className={iconClass} />;
+      case 'create_posts': return <Target className={iconClass} />;
+      case 'interactions': return <Heart className={iconClass} />;
+      case 'edit_profile': return <Wrench className={iconClass} />;
+      case 'maintain_stats': return <Zap className={iconClass} />;
+      default: return <Target className={iconClass} />;
+    }
+  })();
+  return (
+    <div className={cn(
+      'size-8 rounded-full flex items-center justify-center shrink-0',
+      completed ? 'bg-emerald-500/15 text-emerald-500' : 'bg-muted/60 text-muted-foreground',
+    )}>
+      {completed ? <Check className="size-4" /> : icon}
+    </div>
+  );
+}
+
+// ─── Daily mission icon ───────────────────────────────────────────────────────
+
+function DailyMissionIcon({ action, complete }: { action: string; complete: boolean }) {
+  const iconClass = 'size-4';
+  const icon = (() => {
+    switch (action) {
+      case 'interact': return <Heart className={iconClass} />;
+      case 'feed': return <Utensils className={iconClass} />;
+      case 'clean': return <Droplets className={iconClass} />;
+      case 'sleep': return <Moon className={iconClass} />;
+      case 'take_photo': return <Camera className={iconClass} />;
+      case 'sing': return <Mic className={iconClass} />;
+      case 'play_music': return <Music className={iconClass} />;
+      case 'medicine': return <Pill className={iconClass} />;
+      default: return <Target className={iconClass} />;
+    }
+  })();
+  return (
+    <div className={cn(
+      'size-8 rounded-full flex items-center justify-center shrink-0',
+      complete ? 'bg-emerald-500/15 text-emerald-500' : 'bg-muted/60 text-muted-foreground',
+    )}>
+      {complete ? <Check className="size-4" /> : icon}
+    </div>
+  );
+}
+
+// ─── Pets Tab Content ─────────────────────────────────────────────────────────
+
+interface PetsTabContentProps {
+  companion: PetsCompanion;
+  companions: PetsCompanion[];
+  selectedD: string;
+  petsNaddr: string;
+  onSelectPets: (d: string) => void;
+  onAdopt: () => void;
+  onDevOpenEditor: () => void;
+  onDevOpenEmotionPanel: () => void;
+  onDevInstantTransition?: () => void;
+  isHatching: boolean;
+  isEvolving: boolean;
+}
+
+function PetsTabContent({
+  companion,
+  companions,
+  selectedD,
+  petsNaddr,
+  onSelectPets,
+  onAdopt,
+  onDevOpenEditor,
+  onDevOpenEmotionPanel,
+  onDevInstantTransition,
+  isHatching,
+  isEvolving,
+}: PetsTabContentProps) {
+  const profile = useNostrPetProfile().profile;
+  const isTransitioning = isHatching || isEvolving;
+
+  return (
+    <div className="flex flex-col items-center h-full min-h-[210px] px-3 sm:px-4">
+      {/* ── Pets grid ── */}
+      <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-6 py-3">
+        {companions.map((c) => {
+          const isSelected = c.d === selectedD;
+          const isCompanion = c.d === profile?.currentCompanion;
+          return (
+            <button
+              key={c.d}
+              onClick={() => onSelectPets(c.d)}
+              className={cn(
+                'flex flex-col items-center gap-1 transition-all duration-200',
+                'hover:-translate-y-1 hover:scale-105 active:scale-95',
+              )}
+            >
+              <div className="relative">
+                <div className={cn(
+                  'rounded-full p-1 transition-all',
+                  isSelected ? 'ring-2 ring-primary ring-offset-2 ring-offset-background' : '',
+                )}>
+                  <PetsStageVisual
+                    companion={c}
+                    size="sm"
+                    recipe={c.state === 'sleeping' ? buildSleepingRecipe() : undefined}
+                    recipeLabel={c.state === 'sleeping' ? 'sleeping' : undefined}
+                  />
+                </div>
+                {isCompanion && (
+                  <div className="absolute -bottom-0.5 -right-0.5 size-5 rounded-full bg-background ring-2 ring-background flex items-center justify-center">
+                    <Footprints className="size-3 text-emerald-500" />
+                  </div>
+                )}
+                {companionNeedsCare(c) && !isCompanion && (
+                  <div className="absolute -top-0.5 -right-0.5 size-4 rounded-full bg-amber-500 flex items-center justify-center">
+                    <span className="text-[8px] text-white font-bold">!</span>
+                  </div>
+                )}
+              </div>
+              {c.stage !== 'egg' && (
+                <span className={cn(
+                  'text-[11px] font-medium max-w-[4.5rem] truncate',
+                  isSelected ? 'text-foreground' : 'text-muted-foreground',
+                )}>
+                  {c.name}
+                </span>
+              )}
+            </button>
+          );
+        })}
+
+        {/* Adopt + button */}
+        <button
+          onClick={onAdopt}
+          className="flex flex-col items-center gap-1 transition-all duration-200 hover:-translate-y-1 hover:scale-105 active:scale-95"
+        >
+          <div className="size-14 rounded-full flex items-center justify-center" style={{
+            background: 'radial-gradient(circle at 40% 35%, color-mix(in srgb, currentColor 10%, transparent), color-mix(in srgb, currentColor 3%, transparent) 70%)',
+          }}>
+            <Plus className="size-6 text-muted-foreground/60" />
+          </div>
+          <span className="text-[11px] font-medium text-muted-foreground/60">Adopt</span>
+        </button>
+      </div>
+
+      {/* ── Quick actions row ── */}
+      <div className="flex items-center justify-center gap-6 pt-1">
+        <Link to={`/${petsNaddr}`} className="flex flex-col items-center gap-1 text-muted-foreground hover:text-foreground transition-colors">
+          <ExternalLink className="size-5" />
+          <span className="text-[10px]">View</span>
+        </Link>
+        <Link to="/settings/pets" className="flex flex-col items-center gap-1 text-muted-foreground hover:text-foreground transition-colors">
+          <Settings className="size-5" />
+          <span className="text-[10px]">Settings</span>
+        </Link>
+        <Link to="/pets/battle" className="flex flex-col items-center gap-1 text-muted-foreground hover:text-foreground transition-colors">
+          <Swords className="size-5" />
+          <span className="text-[10px]">Battle</span>
+        </Link>
+        <Link to="/pets/chase" className="flex flex-col items-center gap-1 text-muted-foreground hover:text-foreground transition-colors">
+          <Bitcoin className="size-5" />
+          <span className="text-[10px]">Chase BTC</span>
+        </Link>
+        {/* DEV tools */}
+        {isLocalhostDev() && (
+          <>
+            {companion.stage !== 'adult' && onDevInstantTransition && (
+              <button onClick={onDevInstantTransition} disabled={isTransitioning} className="flex flex-col items-center gap-1 text-amber-500 hover:text-amber-400 transition-colors disabled:opacity-40">
+                <Sparkles className="size-5" />
+                <span className="text-[10px]">{companion.stage === 'egg' ? 'Hatch' : 'Evolve'}</span>
+              </button>
+            )}
+            <button onClick={onDevOpenEditor} className="flex flex-col items-center gap-1 text-amber-500 hover:text-amber-400 transition-colors">
+              <Wrench className="size-5" />
+              <span className="text-[10px]">Editor</span>
+            </button>
+            <button onClick={onDevOpenEmotionPanel} className="flex flex-col items-center gap-1 text-amber-500 hover:text-amber-400 transition-colors">
+              <Theater className="size-5" />
+              <span className="text-[10px]">Emote</span>
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── BAO Markets Quest Content ────────────────────────────────────────────────
+
+interface BaoMarketsQuestContentProps {
+  profile: NostrPetProfile | null;
+  updateProfileEvent: (event: import('@nostrify/nostrify').NostrEvent) => void;
+}
+
+function BaoMarketsQuestContent({ profile, updateProfileEvent }: BaoMarketsQuestContentProps) {
+  const { user } = useCurrentUser();
+  const today = getLocalDayString();
+
+  const { activity: baoActivity, isLoading: baoLoading } = useBaoTradeStats(user?.pubkey);
+  const { mutate: claimBaoReward, isPending: isClaimingBao } = useClaimBaoTradeRewards(updateProfileEvent);
+
+  const baoReward = useMemo(() => {
+    if (!baoActivity || !profile) return undefined;
+    return calculateBaoReward(
+      baoActivity,
+      profile.baoLifetimeVolume,
+      profile.baoRewardsClaimedAt,
+      today,
+    );
+  }, [baoActivity, profile, today]);
+
+  const baoClaimedToday = profile?.baoRewardsClaimedAt === today;
+
+  return (
+    <div className="flex flex-col items-center h-full min-h-[210px] px-3 sm:px-4">
+      <div className="w-full max-w-sm rounded-xl border p-3 mt-2 space-y-2">
+        <div className="flex items-center gap-2">
+          <div className="size-7 rounded-full bg-amber-100 flex items-center justify-center shrink-0 dark:bg-amber-900/40">
+            <TrendingUp className="size-4 text-amber-800 dark:text-amber-200" />
+          </div>
+          <p className="text-sm font-semibold">₿AO MARKETS ACTIVITIES</p>
+          {profile && (
+            <span className="ml-auto text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-100 text-amber-950 dark:bg-amber-900/40 dark:text-amber-100">
+              {getBaoTierLabel(profile.baoTier)}
+            </span>
+          )}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Earn bitcoin demo sats by taking trades with virtual bitcoin on the platform.
+          You can claim up to 21,400 per day, create markets, and trade markets in any category.
+          Your open ₿AO MARKETS orders accrue a daily sats reward. More active participation
+          and a higher trader tier mean a larger reward, up to the daily cap that can pay for your pet needs.
+        </p>
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-muted-foreground">Open orders</span>
+          <span className="tabular-nums font-medium">
+            {baoLoading ? '…' : `${baoActivity?.activeOrderCount ?? 0} · ${(baoActivity?.totalActiveAmount ?? 0).toLocaleString()} sats`}
+          </span>
+        </div>
+        <div className="flex items-center justify-between text-xs">
+          <span className="text-muted-foreground">Daily reward</span>
+          <span className="font-semibold tabular-nums text-amber-600 dark:text-amber-400">
+            {baoLoading ? '…' : `+${(baoReward?.sats ?? 0).toLocaleString()} ₿AO sats`}
+          </span>
+        </div>
+        <Button
+          size="sm"
+          variant="outline"
+          className="w-full h-8 text-xs"
+          disabled={baoLoading || baoClaimedToday || !baoReward?.claimable || isClaimingBao}
+          onClick={() => claimBaoReward()}
+        >
+          {isClaimingBao && <Loader2 className="size-3 animate-spin mr-1.5" />}
+          {baoClaimedToday ? 'Claimed today' : baoReward?.claimable ? 'Claim ₿AO' : 'No open orders'}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Species Tab Content ──────────────────────────────────────────────────────
+
+interface SpeciesTabContentProps {
+  companion?: PetsCompanion | null;
+}
+
+function SpeciesTabContent({ companion }: SpeciesTabContentProps) {
+  const [activeCategory, setActiveCategory] = useState<PetsBreedCategory>('2140-pets');
+  const customForms = useCustomForms();
+
+  const members = useMemo(() => {
+    if (activeCategory !== 'custom') return getCategoryMembers(activeCategory);
+    return getCustomCategoryMembers(Object.values(customForms));
+  }, [activeCategory, customForms]);
+
+  const isCustom = activeCategory === 'custom';
+
+  return (
+    <div className="h-full min-h-[210px] px-3 sm:px-4 space-y-3">
+      <div className="flex items-center justify-center gap-2 pt-2">
+        {BREED_CATEGORIES.map((cat) => (
+          <button
+            key={cat.id}
+            type="button"
+            onClick={() => setActiveCategory(cat.id)}
+            className={cn(
+              'px-3 py-1.5 rounded-full text-xs font-medium border transition-colors',
+              activeCategory === cat.id
+                ? 'bg-primary text-primary-foreground border-primary'
+                : 'bg-card/50 text-muted-foreground border-border hover:border-primary/60'
+            )}
+          >
+            {cat.label}
+          </button>
+        ))}
+      </div>
+
+      <p className="text-xs text-muted-foreground text-center">
+        {isCustom
+          ? 'Adult species you have designed. Create more in Pets settings.'
+          : 'Adult species your PET can evolve into. Select a species category above.'}
+      </p>
+
+      <div className="flex flex-wrap items-center justify-center gap-2 sm:gap-3 pb-3">
+        {activeCategory === 'bao' && members.length === 0 && (
+          <div className="flex flex-col items-center gap-2 rounded-xl border p-4 bg-card/50 max-w-xs">
+            <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden bg-muted/40 flex items-center justify-center">
+              <TrendingUp className="size-8 text-amber-500" />
+            </div>
+            <span className="text-xs font-medium text-center">₿AO Pets</span>
+            <p className="text-[10px] text-muted-foreground text-center">
+              Animated market-born companions unlocked through ₿AO trading energy. Coming soon.
+            </p>
+          </div>
+        )}
+
+        {isCustom && members.length === 0 && (
+          <div className="flex flex-col items-center gap-2 rounded-xl border p-4 bg-card/50 max-w-xs">
+            <div className="relative w-16 h-16 sm:w-20 sm:h-20 rounded-lg overflow-hidden bg-muted/40 flex items-center justify-center">
+              <Palette className="size-8 text-primary" />
+            </div>
+            <span className="text-xs font-medium text-center">No custom species yet</span>
+            <p className="text-[10px] text-muted-foreground text-center">
+              Design your own SVG (and optional GLB) species in Pets settings.
+            </p>
+            <Button asChild variant="outline" size="sm" className="w-full">
+              <Link to="/settings/pets">Create custom species</Link>
+            </Button>
+          </div>
+        )}
+
+        {members.map((member) => {
+          if (isCustom && companion) {
+            const previewCompanion: PetsCompanion = {
+              ...companion,
+              stage: 'adult',
+              state: 'active',
+              progressionState: 'none',
+              breedCategory: 'custom',
+              breedAsset: isAdultFormMember(member) ? member.form : member.id,
+              adultType: undefined,
+            };
+
+            return (
+              <div
+                key={isAdultFormMember(member) ? member.form : member.id}
+                className="flex flex-col items-center gap-1 rounded-xl border p-2 bg-card/50"
+              >
+                <div className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-lg overflow-hidden bg-muted/40">
+                  <PetsStageVisual
+                    companion={previewCompanion}
+                    size="sm"
+                    animated={false}
+                  />
+                </div>
+                <span className="text-[10px] font-medium text-muted-foreground">
+                  {member.label}
+                </span>
+              </div>
+            );
+          }
+
+          const svg = isAdultFormMember(member)
+            ? getAdultBaseSvg(member.form)
+            : (() => {
+                const recipe = getBaoRecipeById(member.recipeId ?? member.id);
+                return recipe ? generateBaoSvg(recipe) : '';
+              })();
+
+          return (
+            <div
+              key={isAdultFormMember(member) ? member.form : member.id}
+              className="flex flex-col items-center gap-1 rounded-xl border p-2 bg-card/50"
+            >
+              <div className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-lg overflow-hidden bg-muted/40">
+                <img
+                  src={`data:image/svg+xml,${encodeURIComponent(svg)}`}
+                  alt={member.label}
+                  className="w-full h-full object-contain"
+                  loading="lazy"
+                />
+              </div>
+              <span className="text-[10px] font-medium text-muted-foreground">
+                {member.label}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ─── Needs Tab Content ────────────────────────────────────────────────────────
+
+/** Action label + emoji for display in the activity list */
+const INTERACTION_ACTION_DISPLAY: Record<string, { label: string; icon: string }> = {
+  feed: { label: 'Feed', icon: '🍎' },
+  play: { label: 'Play', icon: '⚽' },
+  clean: { label: 'Clean', icon: '🧼' },
+  medicate: { label: 'Medicine', icon: '💊' },
+  boost: { label: 'Boost', icon: '⚡' },
+};
+
+/** Stat label + icon for the needs summary */
+const STAT_DISPLAY: Record<string, { label: string; icon: string }> = {
+  hunger: { label: 'Hungry', icon: '🍎' },
+  happiness: { label: 'Unhappy', icon: '⚽' },
+  hygiene: { label: 'Dirty', icon: '🧼' },
+  health: { label: 'Unwell', icon: '💊' },
+  energy: { label: 'Tired', icon: '⚡' },
+};
+
+interface ActivityTabContentProps {
+  companion: PetsCompanion;
+  projectedStats: PetsStats;
+  socialOpen: boolean;
+  onToggleSocial: (open: boolean) => Promise<void>;
+  isSocialToggling: boolean;
+  isEgg: boolean;
+}
+
+function ActivityTabContent({ companion, projectedStats, socialOpen, onToggleSocial, isSocialToggling, isEgg }: ActivityTabContentProps) {
+  // Fetch recent unconsolidated interactions for the "Recent help" section.
+  const { interactions: recentHelp, isLoading } = usePetsActivityHistory(isEgg ? null : companion);
+
+  // Compute current needs from projected stats.
+  const needs = useMemo(() => getAllNeeds(projectedStats), [projectedStats]);
+
+  const socialToggleId = 'pets-social-toggle';
+
+  return (
+    <div className="px-4 sm:px-6 space-y-4">
+      {/* ─── Needs Now Summary ─── */}
+      {!isEgg && (
+        <div className="rounded-lg border p-3">
+          {needs.length === 0 ? (
+            <p className="text-sm text-muted-foreground text-center">
+              All good! No needs right now.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+                Needs now
+              </p>
+              <div className="flex flex-wrap gap-1.5">
+                {needs.map(({ stat, priority }) => {
+                  const info = STAT_DISPLAY[stat] ?? { label: stat, icon: '?' };
+                  return (
+                    <span
+                      key={stat}
+                      className={cn(
+                        'inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs font-medium',
+                        priority === 'critical' && 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400',
+                        priority === 'high' && 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400',
+                        priority === 'normal' && 'bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400',
+                        priority === 'low' && 'bg-muted text-muted-foreground',
+                      )}
+                    >
+                      <span>{info.icon}</span>
+                      <span>{info.label}</span>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ─── Social Permission Toggle (hidden for eggs) ─── */}
+      {isEgg ? (
+        <div className="flex items-center gap-2.5 rounded-lg border border-dashed p-3">
+          <Egg className="size-4 shrink-0 text-muted-foreground" />
+          <p className="text-sm text-muted-foreground">
+            Social care settings will unlock after your NOSTR PET hatches.
+          </p>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-3 rounded-lg border p-3">
+          <label htmlFor={socialToggleId} className="flex items-center gap-2.5 cursor-pointer select-none min-w-0">
+            <Users className="size-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0">
+              <p className="text-sm font-medium leading-tight">Allow others to care for this NOSTR PET</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {socialOpen ? 'Anyone can feed, play, and clean.' : 'Only you can interact.'}
+              </p>
+            </div>
+          </label>
+          <Switch
+            id={socialToggleId}
+            checked={socialOpen}
+            onCheckedChange={onToggleSocial}
+            disabled={isSocialToggling}
+            aria-label="Allow other people to care for this NOSTR PET"
+          />
+        </div>
+      )}
+
+      {/* ─── ₿AO Fund upkeep & fundraising (DEMO) ─── */}
+      <PetFundraisingCard companion={companion} />
+
+      {/* ─── Recent Help ─── */}
+      {isLoading ? (
+        <div className="space-y-2">
+          {[...Array(4)].map((_, i) => (
+            <Skeleton key={i} className="h-9 w-full rounded-lg" />
+          ))}
+        </div>
+      ) : recentHelp.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-8 text-muted-foreground">
+          <Heart className="size-6 mb-2 opacity-40" />
+          <p className="text-sm">No recent help</p>
+        </div>
+      ) : (
+        <>
+          <p className="text-xs text-muted-foreground">Recent help</p>
+          <div className="space-y-1 max-h-60 overflow-y-auto">
+            {recentHelp.map((ix) => {
+              const actionInfo = INTERACTION_ACTION_DISPLAY[ix.action] ?? { label: ix.action, icon: '?' };
+              const item = ix.itemId ? getShopItemById(ix.itemId) : undefined;
+
+              return (
+                <div
+                  key={ix.event.id}
+                  className="flex items-center gap-2 py-1.5 px-2 rounded-md bg-muted/40 text-sm"
+                >
+                  <span className="text-base leading-none">{actionInfo.icon}</span>
+                  <span className="font-medium">{actionInfo.label}</span>
+                  {item && (
+                    <span className="text-muted-foreground truncate max-w-[7rem]">
+                      {item.icon} {item.name}
+                    </span>
+                  )}
+                  <span className="ml-auto flex items-center gap-1.5 shrink-0 text-xs text-muted-foreground">
+                    <CaretakerLink pubkey={ix.authorPubkey} />
+                    <span>{timeAgo(ix.createdAt)}</span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** Small inline component to resolve + link a caretaker's display name. */
+function CaretakerLink({ pubkey }: { pubkey: string }) {
+  const author = useAuthor(pubkey);
+  const displayName = author.data?.metadata?.name ?? 'Anonymous';
+  const profilePath = getProfileUrl(pubkey, author.data?.metadata);
+
+  return (
+    <Link
+      to={profilePath}
+      className="font-medium text-foreground hover:underline truncate max-w-[6rem]"
+      title={displayName}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {displayName}
+    </Link>
+  );
+}
+
+// ─── Pets Selector Page ─────────────────────────────────────────────────────
+
+interface PetsSelectorPageProps {
+  companions: PetsCompanion[];
+  onSelect: (d: string) => void;
+  isLoading?: boolean;
+  onAdopt?: () => void;
+  currentCompanion?: string;
+}
+
+function PetsSelectorPage({ companions, onSelect, isLoading, onAdopt, currentCompanion }: PetsSelectorPageProps) {
+  return (
+    <DashboardShell>
+      <div className="flex items-center justify-between px-4 py-3 sm:px-6 sm:py-4">
+        <div className="flex items-center gap-3">
+          <Egg className="size-5 text-primary" />
+          <div>
+            <h1 className="text-lg font-semibold">Choose Your NOSTR PET</h1>
+            <p className="text-xs text-muted-foreground">Select a companion to care for</p>
+          </div>
+        </div>
+        {isLoading && <RefreshCw className="size-4 text-muted-foreground animate-spin" />}
+      </div>
+      <div className="flex-1 flex flex-col items-center justify-center px-4 sm:px-6 py-6">
+        <div className="flex flex-wrap items-center justify-center gap-6 sm:gap-8">
+          {companions.map((c) => {
+            const isCompanion = c.d === currentCompanion;
+            return (
+              <button
+                key={c.d}
+                onClick={() => onSelect(c.d)}
+                className="flex flex-col items-center gap-1.5 transition-all duration-200 hover:-translate-y-1 hover:scale-105 active:scale-95"
+              >
+                <div className="relative">
+                  <PetsStageVisual companion={c} size="sm" />
+                  {isCompanion && (
+                    <div className="absolute -bottom-0.5 -right-0.5 size-5 rounded-full bg-background ring-2 ring-background flex items-center justify-center">
+                      <Footprints className="size-3 text-emerald-500" />
+                    </div>
+                  )}
+                </div>
+                <span className="text-xs font-medium text-muted-foreground max-w-[5rem] truncate">{c.name}</span>
+              </button>
+            );
+          })}
+          {onAdopt && (
+            <button
+              onClick={onAdopt}
+              className="flex flex-col items-center gap-1.5 transition-all duration-200 hover:-translate-y-1 hover:scale-105 active:scale-95"
+            >
+              <div className="size-14 rounded-full flex items-center justify-center" style={{
+                background: 'radial-gradient(circle at 40% 35%, color-mix(in srgb, currentColor 10%, transparent), color-mix(in srgb, currentColor 3%, transparent) 70%)',
+              }}>
+                <Plus className="size-6 text-muted-foreground/60" />
+              </div>
+              <span className="text-xs font-medium text-muted-foreground/60">Adopt</span>
+            </button>
+          )}
+        </div>
+      </div>
+    </DashboardShell>
+  );
+}
+
+
+
+// ─── Pets Swap Button ─────────────────────────────────────────────────────────
+
+interface PetsSwapButtonProps {
+  companions: PetsCompanion[];
+  selectedD: string;
+  currentCompanionD?: string;
+  onSelect: (d: string) => void;
+}
+
+function PetsSwapButton({ companions, selectedD, currentCompanionD, onSelect }: PetsSwapButtonProps) {
+  const [open, setOpen] = useState(false);
+  if (companions.length < 2) return null;
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          className="flex items-center gap-1.5 rounded-full bg-background/70 px-2.5 py-1 text-xs font-medium text-muted-foreground hover:text-foreground hover:bg-background transition-colors"
+          aria-label="Switch NOSTR PET"
+        >
+          <ArrowLeftRight className="size-3.5" />
+          <span>Swap</span>
+        </button>
+      </PopoverTrigger>
+      <PopoverContent side="bottom" align="center" className="w-auto p-3">
+        <div className="flex items-center justify-between mb-2">
+          <p className="text-xs font-medium text-muted-foreground">Switch NOSTR PET</p>
+          <button
+            onClick={() => setOpen(false)}
+            aria-label="Close"
+            className="size-5 rounded-full flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+          >
+            <X className="size-3" />
+          </button>
+        </div>
+        <div className="flex items-center gap-3 overflow-x-auto max-w-[16rem] sm:max-w-xs px-1 py-1 scrollbar-thin">
+          {companions.map((c) => {
+            const isSelected = c.d === selectedD;
+            const isCompanion = c.d === currentCompanionD;
+            return (
+              <button
+                key={c.d}
+                onClick={() => { onSelect(c.d); setOpen(false); }}
+                disabled={isSelected}
+                className={cn(
+                  'flex-shrink-0 flex flex-col items-center gap-1 transition-all duration-200 hover:-translate-y-0.5 hover:scale-105 active:scale-95',
+                  isSelected && 'opacity-50 pointer-events-none',
+                )}
+                aria-label={`Switch to ${c.name}`}
+              >
+                <div className="relative">
+                  <PetsStageVisual companion={c} size="sm" />
+                  {isCompanion && (
+                    <div className="absolute -bottom-0.5 -right-0.5 size-4 rounded-full bg-background ring-1 ring-background flex items-center justify-center">
+                      <Footprints className="size-2.5 text-emerald-500" />
+                    </div>
+                  )}
+                </div>
+                <span className="text-[10px] font-medium text-muted-foreground max-w-[3.5rem] truncate">
+                  {c.stage === 'egg' ? 'Egg' : c.name}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+// ─── Dashboard Loading State ──────────────────────────────────────────────────
+
+function DashboardLoadingState() {
+  return (
+    <DashboardShell>
+      <div className="flex-1 flex flex-col items-center justify-center px-4 py-4">
+        <Skeleton className="h-8 w-32 mb-6" />
+        <Skeleton className="size-80 sm:size-96 md:size-[28rem] rounded-full" />
+      </div>
+      <div className="px-4 pb-6 sm:px-6">
+        <div className="flex justify-center gap-4 sm:gap-6">
+          {[...Array(5)].map((_, i) => (
+            <div key={i} className="flex flex-col items-center gap-1">
+              <Skeleton className="size-14 sm:size-16 rounded-full" />
+              <Skeleton className="h-3 w-10" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </DashboardShell>
+  );
+}
+
+// ─── Crumb Burst (chewing feedback particles) ────────────────────────────────
+
+/** Reward words — one is picked at random on each feed. */
+const REWARD_WORDS = [
+  'nhom!', 'nom nom!', 'yum!', 'yum yum!', 'mmm~',
+  'munch!', 'cronch!', 'tasty!', 'hehe!', '\u2661',
+] as const;
+
+/**
+ * Crumb particle configs — 12 small dots that spawn from a compact
+ * mouth-shaped strip and tumble mostly downward.
+ *
+ * `sx`/`sy` — spawn offset from the mouth center (mouth ~16 px wide).
+ * `dx`/`dy` — drift from the spawn point during the fall animation.
+ * `delay`   — staggered start for a natural feel.
+ * `size`    — 2–4 px (small crumbs with a few medium ones).
+ * `color`   — warm food-like Tailwind colour class.
+ */
+const CRUMB_PARTICLES: ReadonlyArray<{
+  sx: number; sy: number; dx: number; dy: number;
+  delay: number; size: number; color: string;
+}> = [
+  // left side of mouth
+  { sx: -7, sy:  0, dx: -4, dy: 14, delay:   0, size: 2, color: 'bg-amber-600/90' },
+  { sx: -5, sy:  1, dx: -2, dy: 18, delay:  50, size: 3, color: 'bg-orange-500/85' },
+  { sx: -8, sy: -1, dx: -5, dy: 12, delay: 100, size: 2, color: 'bg-yellow-600/80' },
+  // center of mouth
+  { sx: -2, sy:  2, dx:  1, dy: 20, delay:  30, size: 3, color: 'bg-amber-700/90' },
+  { sx:  1, sy:  3, dx: -1, dy: 24, delay:  80, size: 4, color: 'bg-orange-600/85' },
+  { sx:  0, sy:  2, dx:  2, dy: 16, delay: 120, size: 2, color: 'bg-amber-500/90' },
+  // right side of mouth
+  { sx:  5, sy:  1, dx:  3, dy: 18, delay:  40, size: 3, color: 'bg-amber-600/80' },
+  { sx:  7, sy:  0, dx:  5, dy: 14, delay:  90, size: 2, color: 'bg-yellow-700/80' },
+  { sx:  8, sy: -1, dx:  4, dy: 12, delay: 130, size: 2, color: 'bg-orange-500/75' },
+  // a few extra that fall a bit further for depth
+  { sx: -3, sy:  2, dx: -3, dy: 26, delay:  60, size: 4, color: 'bg-amber-700/80' },
+  { sx:  3, sy:  2, dx:  2, dy: 28, delay: 110, size: 3, color: 'bg-yellow-600/75' },
+  { sx:  0, sy:  3, dx:  0, dy: 22, delay: 140, size: 2, color: 'bg-orange-600/80' },
+];
+
+/**
+ * Burst of crumb particles + a tiny floating reward word.
+ *
+ * Crumbs are anchored at (crumbX, crumbY) — just below the mouth — and
+ * fall outward via the `crumb-fall` CSS animation.
+ *
+ * The reward word is anchored at (rewardX, rewardY) — above the head —
+ * and floats upward via `reward-pop`.
+ *
+ * Both layers are pointer-events-none and aria-hidden; purely decorative.
+ */
+function CrumbBurst({ crumbX, crumbY, rewardX, rewardY }: {
+  crumbX: number; crumbY: number;
+  rewardX: number; rewardY: number;
+}) {
+  // Pick a stable random word for this burst instance.
+  const [word] = useState(() => REWARD_WORDS[Math.floor(Math.random() * REWARD_WORDS.length)]);
+
+  return (
+    <>
+      {/* Crumb particles — anchored just below the mouth */}
+      <div
+        className="fixed pointer-events-none z-[60]"
+        style={{ left: crumbX, top: crumbY }}
+        aria-hidden="true"
+      >
+        {CRUMB_PARTICLES.map((p, i) => (
+          <span
+            key={i}
+            className={`absolute rounded-full ${p.color} animate-crumb-fall`}
+            style={{
+              left: p.sx,
+              top: p.sy,
+              width: p.size,
+              height: p.size,
+              animationDelay: `${p.delay}ms`,
+              '--crumb-dx': `${p.dx}px`,
+              '--crumb-dy': `${p.dy}px`,
+            } as React.CSSProperties}
+          />
+        ))}
+      </div>
+
+      {/* Floating reward word — anchored above the head */}
+      <span
+        className="fixed pointer-events-none z-[60] text-xs font-bold text-amber-500 drop-shadow-[0_1px_2px_rgba(180,83,9,0.4)] animate-reward-pop whitespace-nowrap select-none"
+        style={{ left: rewardX, top: rewardY, transform: 'translate(-50%, 0)' }}
+        aria-hidden="true"
+      >
+        {word}
+      </span>
+    </>
+  );
+}
+
+// ─── Hatch Ceremony Overlay ───────────────────────────────────────────────────
+
+

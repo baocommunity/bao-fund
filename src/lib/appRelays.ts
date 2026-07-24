@@ -1,0 +1,118 @@
+import type { RelayMetadata } from '@/contexts/AppContext';
+
+/** Relay used for NIP-50 search, trending, and streaming queries. */
+export const APP_SEARCH_RELAY = 'wss://relay.ditto.pub/';
+
+/** All 2140.wtf relays used for search, trending, and streaming queries. */
+export const APP_SEARCH_RELAYS: string[] = [
+  'wss://relay.ditto.pub/',
+  'wss://relay.dreamith.to/',
+];
+
+/** Relays used for the curated 2140.wtf account feed. */
+export const APP_CURATED_FEED_RELAYS: string[] = [
+  'wss://relay.ditto.pub/',
+  'wss://relay.dreamith.to/',
+  'wss://relay.primal.net/',
+  'wss://relay.damus.io/',
+  'wss://relay.nostr.band/',
+  'wss://nos.lol/',
+  'wss://relay.mostr.pub/',
+  'wss://offchain.pub/',
+  'wss://relay.snort.social/',
+  'wss://bitcoiner.social/',
+  'wss://nostr.bitcoiner.social/',
+];
+
+/** Relay used for Zapstore app metadata (kind 32267) and releases (kind 30063). */
+export const ZAPSTORE_RELAY = 'wss://relay.zapstore.dev/';
+
+/**
+ * Extended relay set for NIP-99 classified listings (kind 30402).
+ *
+ * Marketplace listings are published to a mix of general relays, BAO's
+ * marketplace relay, and relays favoured by NIP-99 clients such as Shopstr.
+ * Querying this set on top of the user's configured relays gives the merchant
+ * feed the best chance of surfacing active offers.
+ */
+export const NIP99_RELAYS: string[] = [
+  'wss://relay.ditto.pub',
+  'wss://relay.dreamith.to',
+  'wss://relay.nostr.band',
+  'wss://relay.noswhere.com',
+  'wss://nostr.wine',
+  'wss://antiprimal.net',
+  'wss://relay.primal.net',
+  'wss://relay.damus.io',
+  'wss://nos.lol',
+  'wss://relay.snort.social',
+  'wss://relay.nostr.wirednet.jp',
+  'wss://nostr21.com',
+  'wss://offchain.pub',
+  'wss://bitcoiner.social',
+  'wss://nostr.bitcoiner.social',
+  'wss://eden.nostr.land',
+  'wss://atlas.nostr.land',
+  'wss://nostr.mom',
+  'wss://relay.nostr.bg',
+  'wss://relay.0xchat.com',
+  'wss://relay.nostrcn.com',
+  'wss://relay.nostrview.com',
+  'wss://relay.notoshi.io',
+  'wss://nostr.slothy.win',
+  'wss://relay.nostr.ro',
+];
+
+/** Normalize a relay URL for deduplication (lowercase, strip trailing slash). */
+function normalizeUrl(url: string): string {
+  return url.toLowerCase().replace(/\/+$/, '');
+}
+
+/**
+ * App default relays that are used as a fallback when the user has no NIP-65 relay list,
+ * and can be optionally combined with user relays.
+ */
+export const APP_RELAYS: RelayMetadata = {
+  relays: [
+    { url: 'wss://relay.ditto.pub/', read: true, write: true },
+    { url: 'wss://relay.dreamith.to/', read: true, write: true },
+    { url: 'wss://relay.primal.net/', read: false, write: true },
+    { url: 'wss://relay.damus.io/', read: false, write: true },
+  ],
+  updatedAt: 0,
+};
+
+/**
+ * Get the effective relay list based on user settings.
+ *
+ * - `useAppRelays`: when true, the app-default relays are included (first).
+ * - `useUserRelays`: when true, the user's personal NIP-65 list is included.
+ *
+ * When both flags are off the result is empty. When both are on the two lists
+ * are merged with app relays first, deduplicated by normalized URL.
+ */
+export function getEffectiveRelays(
+  userRelays: RelayMetadata,
+  useAppRelays: boolean,
+  useUserRelays: boolean,
+): RelayMetadata {
+  const seen = new Set<string>();
+  const mergedRelays: RelayMetadata['relays'][number][] = [];
+
+  const sources: RelayMetadata['relays'] = [];
+  if (useAppRelays) sources.push(...APP_RELAYS.relays);
+  if (useUserRelays) sources.push(...userRelays.relays);
+
+  for (const relay of sources) {
+    const normalized = normalizeUrl(relay.url);
+    if (!seen.has(normalized)) {
+      seen.add(normalized);
+      mergedRelays.push(relay);
+    }
+  }
+
+  return {
+    relays: mergedRelays,
+    updatedAt: userRelays.updatedAt,
+  };
+}

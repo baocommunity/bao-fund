@@ -1,0 +1,294 @@
+import process from "node:process";
+import { execSync } from "node:child_process";
+import { createRequire } from "node:module";
+import fs from "node:fs";
+import path from "node:path";
+
+import react from "@vitejs/plugin-react";
+import { visualizer } from "rollup-plugin-visualizer";
+import { defineConfig, loadEnv, type Plugin } from "vite";
+
+import { AppConfigSchema } from "./src/lib/schemas";
+
+const PROJECT_ROOT = path.resolve(process.cwd());
+
+/**
+ * Ensure `target` resolves inside the project root. Prevents build-time path
+ * traversal via environment variables such as APP_CONFIG_FILE.
+ */
+function isWithinProjectRoot(target: string): boolean {
+  const resolved = path.resolve(PROJECT_ROOT, target);
+  return resolved === PROJECT_ROOT || resolved.startsWith(PROJECT_ROOT + path.sep);
+}
+
+/**
+ * Load and validate the build-time app.json configuration file.
+ * Returns the parsed config object, or `undefined` if the file doesn't exist.
+ * Set the APP_CONFIG_FILE env var to override the default path ("./app.json").
+ *
+ * Why APP_CONFIG_FILE and not CONFIG_FILE: GitLab Runner sets CONFIG_FILE in
+ * its job environment to point at its own TOML config (~/.gitlab-runner/config.toml),
+ * so a generic name silently breaks every CI build that runs on a self-hosted runner.
+ */
+function loadAppConfig(): object | undefined {
+  const rawPath = process.env.APP_CONFIG_FILE ?? "./app.json";
+  if (!isWithinProjectRoot(rawPath)) {
+    throw new Error(`APP_CONFIG_FILE must resolve inside the project root: ${rawPath}`);
+  }
+  const configPath = path.resolve(PROJECT_ROOT, rawPath);
+
+  let raw: string;
+  try {
+    raw = fs.readFileSync(configPath, "utf-8");
+  } catch {
+    // File not found — no build-time config
+    return undefined;
+  }
+
+  const json = JSON.parse(raw);
+  const result = AppConfigSchema.parse(json);
+  return result;
+}
+
+/**
+ * Copy all files from `src` into `dest`, overwriting existing files.
+ * Recursively handles subdirectories.
+ */
+function copyDirSync(src: string, dest: string): void {
+  if (!fs.existsSync(src)) return;
+  fs.mkdirSync(dest, { recursive: true });
+  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    const srcPath = path.join(src, entry.name);
+    const destPath = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      copyDirSync(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  }
+}
+
+/**
+ * Vite plugin that merges an external public directory on top of the default one.
+ * Set the PUBLIC_DIR env var to a directory path. Files in that directory take
+ * precedence over files in the built-in `public/` directory.
+ *
+ * - In build mode, files are copied into the output after the default public dir.
+ * - In dev mode, the external directory is served with higher priority.
+ */
+function mergePublicDir(externalDir: string): Plugin {
+  const resolved = path.resolve(externalDir);
+
+  return {
+    name: "2140:merge-public-dir",
+
+    configureServer(server) {
+      // Serve files from the external public dir before the default public dir.
+      server.middlewares.use((req, res, next) => {
+        if (!req.url) return next();
+
+        const urlPath = decodeURIComponent(new URL(req.url, "http://localhost").pathname);
+        const filePath = path.resolve(resolved, urlPath);
+        if (filePath !== resolved && !filePath.startsWith(resolved + path.sep)) {
+          return next();
+        }
+
+        try {
+          const stat = fs.statSync(filePath);
+          if (stat.isFile()) {
+            // Let Vite's static middleware handle it by pointing to the file.
+            const stream = fs.createReadStream(filePath);
+            stream.pipe(res);
+            return;
+          }
+        } catch {
+          // File not found in external dir — fall through to default public dir
+        }
+
+        next();
+      });
+    },
+
+    writeBundle(options) {
+      const outDir = options.dir ?? path.resolve("dist");
+      copyDirSync(resolved, outDir);
+    },
+  };
+}
+
+const appConfig = loadAppConfig();
+const publicDir = process.env.PUBLIC_DIR;
+const require = createRequire(import.meta.url);
+const pkg = require("./package.json") as { version: string };
+
+/** Short commit SHA — prefer CI env var, fall back to git. */
+function getCommitSha(): string {
+  if (process.env.CI_COMMIT_SHORT_SHA) return process.env.CI_COMMIT_SHORT_SHA;
+  try {
+    return execSync("git rev-parse --short HEAD", { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
+}
+
+/** Git tag for the current commit — prefer CI env var, fall back to git. Empty string if untagged. */
+function getCommitTag(): string {
+  if (process.env.CI_COMMIT_TAG) return process.env.CI_COMMIT_TAG;
+  try {
+    return execSync("git describe --exact-match --tags HEAD 2>/dev/null", { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
+}
+
+// https://vitejs.dev/config/
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+
+  // The nsite build (`vite build --mode nsite`) emits a minimal number of files.
+  // nsite is published by signing a site *manifest* (the list of every file in
+  // dist/) through a NIP-46 bunker, which NIP-44-encrypts the whole sign_event
+  // request — and that must stay under 65535 bytes. The normal ~470-chunk build
+  // overflows it ("invalid plaintext size"). In nsite mode we disable code
+  // splitting so the app ships as one app.js + one app.css, dropping dist/ to
+  // ~one-third the files. Every other build keeps fine-grained lazy loading.
+  const isNsite = mode === 'nsite';
+
+  return {
+    server: {
+      host: "::",
+      port: 3500,
+      // Fail loudly instead of silently drifting to 3501 when the port is
+      // taken — the drift is confusing ("which port is the app on now?").
+      strictPort: true,
+      allowedHosts: env.ALLOWED_HOSTS === "*" ? true : undefined,
+      // Avoid stale dynamic-import chunk errors during development. Vite's
+      // dev server may otherwise serve cached module URLs after rebuilds.
+      headers: {
+        'Cache-Control': 'no-store, must-revalidate',
+      },
+      proxy: {
+        '/api/stacker-news': {
+          target: 'https://stacker.news',
+          changeOrigin: true,
+          rewrite: () => '/api/graphql',
+        },
+        // Lightning Observatory stats API (no CORS headers upstream, so the
+        // in-app page fetches it same-origin here; production hosts should add
+        // the equivalent rule forwarding /lo-api/* to /api/* upstream).
+        '/lo-api': {
+          target: 'https://lightningobservatory.com',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/lo-api/, '/api'),
+        },
+      },
+      watch: {
+        ignored: [
+          '**/.tools/**',
+          // Scratch dirs — .tmp holds full upstream repo clones whose tens of
+          // thousands of files exhaust the inotify watcher limit (ENOSPC).
+          '**/.tmp/**',
+          '**/.research/**',
+          '**/test-results/**',
+          '**/.claude/**',
+          '**/.agents/**',
+          '**/android/**',
+          '**/ios/**',
+          '**/dist/**',
+          '**/node_modules/**',
+        ],
+      },
+    },
+    preview: {
+      port: 3500,
+      // Avoid stale chunk errors when the preview server is restarted after
+      // rebuilds. The lazy-loaded chunks are content-hashed, so a cached
+      // index.html can reference chunks that no longer exist.
+      headers: {
+        'Cache-Control': 'no-store, must-revalidate',
+      },
+      proxy: {
+        '/api/stacker-news': {
+          target: 'https://stacker.news',
+          changeOrigin: true,
+          rewrite: () => '/api/graphql',
+        },
+        // Lightning Observatory stats API (no CORS headers upstream, so the
+        // in-app page fetches it same-origin here; production hosts should add
+        // the equivalent rule forwarding /lo-api/* to /api/* upstream).
+        '/lo-api': {
+          target: 'https://lightningobservatory.com',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/lo-api/, '/api'),
+        },
+      },
+    },
+  plugins: [
+    react(),
+    ...(process.env.ANALYZE
+      ? [
+          visualizer({
+            filename: "dist/bundle.html",
+            template: "treemap",
+            gzipSize: true,
+          }),
+        ]
+      : []),
+    ...(publicDir ? [mergePublicDir(publicDir)] : []),
+  ],
+  define: {
+    'import.meta.env.APP_CONFIG': JSON.stringify(JSON.stringify(appConfig ?? null)),
+    'import.meta.env.VERSION': JSON.stringify(pkg.version),
+    'import.meta.env.BUILD_DATE': JSON.stringify(new Date().toISOString()),
+    'import.meta.env.COMMIT_SHA': JSON.stringify(getCommitSha()),
+    'import.meta.env.COMMIT_TAG': JSON.stringify(getCommitTag()),
+  },
+  test: {
+    globals: true,
+    environment: 'jsdom',
+    setupFiles: './src/test/setup.ts',
+    exclude: ['**/node_modules/**', '**/dist/**', '.idea', '.git', '.cache', 'e2e', '.tmp', 'services', '.claude', 'vendor'],
+    onConsoleLog(log) {
+      return !log.includes("React Router Future Flag Warning");
+    },
+    env: {
+      DEBUG_PRINT_LIMIT: '0', // Suppress DOM output that exceeds AI context windows
+    },
+  },
+  build: {
+    target: 'esnext',
+    rollupOptions: {
+      output: isNsite
+        ? {
+            // Disable code splitting so every dynamic import folds into the single
+            // entry chunk: the build emits exactly one JS file, and Vite emits one
+            // CSS file alongside it.
+            codeSplitting: false,
+            entryFileNames: 'assets/app-[hash].js',
+            assetFileNames: (assetInfo: { names?: string[] }) => {
+              const name = assetInfo.names?.[0] ?? '';
+              if (name.endsWith('.css')) return 'assets/app-[hash].css';
+              return 'assets/[name]-[hash][extname]';
+            },
+          }
+        : {
+            manualChunks(id: string) {
+              // Consolidate lucide icons into a single chunk instead of 60+ micro-chunks.
+              if (id.includes('node_modules/lucide-react')) {
+                return 'lucide-icons';
+              }
+            },
+          },
+    },
+  },
+  optimizeDeps: {
+    exclude: ['@capacitor/filesystem', '@capacitor/share'],
+  },
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+    dedupe: ['react', 'react-dom', 'react/jsx-runtime'],
+  },
+};
+});

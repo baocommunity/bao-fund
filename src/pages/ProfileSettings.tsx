@@ -1,0 +1,1330 @@
+import { useSeoMeta } from '@unhead/react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Loader2, Plus, Trash2, ChevronDown,
+  Wallet, Upload, Music, ImageIcon, Film, Mail, Link2, Pencil, Eye, EyeOff, Copy, Check, Download, KeyRound, AlertTriangle, CloudSun,
+  QrCode, ExternalLink, MessageCircle,
+} from 'lucide-react';
+import { nip19 } from 'nostr-tools';
+import { useNostrLogin } from '@nostrify/react/login';
+
+import { saveNsec } from '@/lib/credentialManager';
+import { useLayoutOptions, useNavHidden } from '@/contexts/LayoutContext';
+import { cn } from '@/lib/utils';
+import { Navigate, useLocation } from 'react-router-dom';
+import { useForm, useFieldArray } from 'react-hook-form';
+import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
+import { NSchema as n } from '@nostrify/nostrify';
+import type { NostrMetadata } from '@nostrify/nostrify';
+import { useQueryClient } from '@tanstack/react-query';
+
+import { ProfileCard } from '@/components/ProfileCard';
+import { ProfileRightSidebar } from '@/components/ProfileRightSidebar';
+import { PageHeader } from '@/components/PageHeader';
+import { IntroImage } from '@/components/IntroImage';
+import { HelpTip } from '@/components/HelpTip';
+import { ImageCropDialog } from '@/components/ImageCropDialog';
+import { SortableList, SortableItem } from '@/components/SortableList';
+import { PaymentTargetsEditor, type PaymentTargetsEditorHandle } from '@/components/PaymentTargetsEditor';
+import { useAppContext } from '@/hooks/useAppContext';
+import { useCurrentUser } from '@/hooks/useCurrentUser';
+import { useNostrPublish } from '@/hooks/useNostrPublish';
+import { useUploadFile } from '@/hooks/useUploadFile';
+
+import { useToast } from '@/hooks/useToast';
+import { usePublishPreferences } from '@/hooks/usePublishPreferences';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Switch } from '@/components/ui/switch';
+
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from '@/components/ui/dialog';
+import { QRCodeCanvas } from '@/components/ui/qrcode';
+import { openUrl } from '@/lib/downloadFile';
+import { isValidAvatarShape } from '@/lib/avatarShape';
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const WALLET_TICKERS = [
+  '$BTC',
+  '$BTC Silent',
+  '$Lightning',
+  '$Lightning BOLT12',
+  '$Cashu BOLT12',
+  '$XMR',
+  '$Venmo',
+  '$Revolut',
+  '$Cash App',
+] as const;
+
+/** Bare tickers used only for detection (strips leading $). */
+const BARE_TICKERS = WALLET_TICKERS.map((t) => t.slice(1));
+
+// ── Field preset templates ────────────────────────────────────────────────────
+
+interface FieldPreset {
+  id: string;
+  label: string;
+  description: string;
+  icon: React.ComponentType<{ className?: string }>;
+  /** Default label to pre-fill when adding this field type. */
+  defaultLabel: string;
+  /** The form field type. */
+  type: 'text' | 'wallet' | 'media';
+  /** File accept attribute for the file picker (media types only). */
+  accept?: string;
+  /** Human-readable format list shown in tooltips. */
+  formatHint?: string;
+  /** Placeholder for the value input. */
+  valuePlaceholder?: string;
+}
+
+const FIELD_PRESETS: FieldPreset[] = [
+  {
+    id: 'music',
+    label: 'Music',
+    description: 'Upload a song or audio clip',
+    icon: Music,
+    defaultLabel: '\u{1F3B6}',
+    type: 'media',
+    accept: 'audio/*',
+    formatHint: 'MP3, OGG, WAV, FLAC, AAC, M4A, Opus',
+    valuePlaceholder: 'Upload audio or paste direct file link',
+  },
+  {
+    id: 'photo',
+    label: 'Photo',
+    description: 'Upload an image',
+    icon: ImageIcon,
+    defaultLabel: '\u{1F4F8}',
+    type: 'media',
+    accept: 'image/*',
+    formatHint: 'JPG, PNG, GIF, WebP, SVG, AVIF',
+    valuePlaceholder: 'Upload image or paste direct file link',
+  },
+  {
+    id: 'video',
+    label: 'Video',
+    description: 'Upload a video clip',
+    icon: Film,
+    defaultLabel: '\u{1F3AC}',
+    type: 'media',
+    accept: 'video/*',
+    formatHint: 'MP4, WebM, MOV',
+    valuePlaceholder: 'Upload video or paste direct file link',
+  },
+  {
+    id: 'email',
+    label: 'Email',
+    description: 'Contact email address',
+    icon: Mail,
+    defaultLabel: 'Email',
+    type: 'text',
+    valuePlaceholder: 'you@example.com',
+  },
+  {
+    id: 'wallet',
+    label: 'Wallet',
+    description: 'Cryptocurrency wallet address',
+    icon: Wallet,
+    defaultLabel: '$BTC',
+    type: 'wallet',
+    valuePlaceholder: 'Address',
+  },
+  {
+    id: 'link',
+    label: 'Link',
+    description: 'Link to any website or profile',
+    icon: Link2,
+    defaultLabel: '',
+    type: 'text',
+    valuePlaceholder: 'https://...',
+  },
+  {
+    id: 'weather',
+    label: 'Weather',
+    description: 'Connect a Nostr weather station',
+    icon: CloudSun,
+    defaultLabel: 'Weather',
+    type: 'text',
+    valuePlaceholder: 'npub1... or naddr1... (#station-id optional)',
+  },
+];
+
+/** The "Custom" preset — always shown last, separated by a divider. */
+const CUSTOM_PRESET: FieldPreset = {
+  id: 'custom',
+  label: 'Custom',
+  description: 'Create any custom field',
+  icon: Pencil,
+  defaultLabel: '',
+  type: 'text',
+  valuePlaceholder: 'Value or URL',
+};
+
+/** Find a preset's format hint from its accept filter. */
+function getFormatHintForAccept(accept: string | undefined): string | undefined {
+  if (!accept) return undefined;
+  const preset = FIELD_PRESETS.find((p) => p.accept === accept);
+  return preset?.formatHint;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+/** Infer the field type from stored label/value when loading from existing data. */
+function inferFieldType(label: string, value: string): 'text' | 'wallet' | 'media' {
+  const bare = label.replace(/^\$/, '').toUpperCase();
+  if (BARE_TICKERS.includes(bare)) return 'wallet';
+  // Known media file extensions
+  if (/^https?:\/\/.+\.(jpe?g|png|gif|webp|svg|avif|mp4|webm|mov|mp3|ogg|wav|flac)(\?.*)?$/i.test(value)) return 'media';
+  // Blossom-style URLs: path is a long hex hash (SHA-256), optionally with an extension
+  if (/^https?:\/\/.+\/[0-9a-f]{64}(\.\w+)?$/i.test(value)) return 'media';
+  return 'text';
+}
+
+/** Extension patterns for each media accept category. */
+const AUDIO_EXT = /\.(mp3|mpga|ogg|oga|wav|flac|aac|m4a|opus|weba|webm|spx|caf)(\?.*)?$/i;
+const IMAGE_EXT = /\.(jpe?g|png|gif|webp|svg|avif)(\?.*)?$/i;
+const VIDEO_EXT = /\.(mp4|webm|mov|qt)(\?.*)?$/i;
+
+/**
+ * Check whether a pasted URL matches the expected file type for a media field.
+ * Returns a warning message if the URL looks wrong, or undefined if it's fine.
+ * Only warns when the value looks like a URL — empty/non-URL values return undefined.
+ */
+function getMediaMismatchWarning(value: string, accept: string | undefined): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  // Only check if it looks like a URL
+  if (!trimmed.startsWith('http://') && !trimmed.startsWith('https://')) return undefined;
+
+  // Blossom-style URLs (hex hash path) are always fine — type can't be determined from URL
+  if (/^https?:\/\/.+\/[0-9a-f]{64}(\.\w+)?$/i.test(trimmed)) return undefined;
+
+  // Check if URL has a recognizable file extension at all
+  const hasAudioExt = AUDIO_EXT.test(trimmed);
+  const hasImageExt = IMAGE_EXT.test(trimmed);
+  const hasVideoExt = VIDEO_EXT.test(trimmed);
+  const hasKnownExt = hasAudioExt || hasImageExt || hasVideoExt;
+
+  if (accept === 'audio/*') {
+    if (hasKnownExt && !hasAudioExt) {
+      return 'This URL doesn\u2019t point to an audio file. Upload an audio file or use a direct link ending in .mp3, .ogg, .wav, etc.';
+    }
+    if (!hasKnownExt) {
+      return 'This URL may not work as an audio player. For best results, upload a file using the button or paste a direct link to an audio file.';
+    }
+  }
+
+  if (accept === 'image/*') {
+    if (hasKnownExt && !hasImageExt) {
+      return 'This URL doesn\u2019t point to an image. Upload an image or use a direct link ending in .jpg, .png, .webp, etc.';
+    }
+    if (!hasKnownExt) {
+      return 'This URL may not display as an image. For best results, upload a file using the button or paste a direct link to an image file.';
+    }
+  }
+
+  if (accept === 'video/*') {
+    if (hasKnownExt && !hasVideoExt) {
+      return 'This URL doesn\u2019t point to a video. Upload a video or use a direct link ending in .mp4, .webm, .mov, etc.';
+    }
+    if (!hasKnownExt) {
+      return 'This URL may not display as a video. For best results, upload a file using the button or paste a direct link to a video file.';
+    }
+  }
+
+  return undefined;
+}
+
+/** Infer a file-accept filter from an existing field's value URL. */
+function inferAcceptFromValue(value: string): string | undefined {
+  if (/\.(mp3|mpga|ogg|oga|wav|flac|aac|m4a|opus|weba|webm|spx|caf)(\?.*)?$/i.test(value)) return 'audio/*';
+  if (/\.(jpe?g|png|gif|webp|svg|avif)(\?.*)?$/i.test(value)) return 'image/*';
+  if (/\.(mp4|webm|mov|qt)(\?.*)?$/i.test(value)) return 'video/*';
+  return undefined;
+}
+
+// ── Schema ────────────────────────────────────────────────────────────────────
+
+const formSchema = n.metadata().extend({
+  fields: z.array(z.object({
+    label: z.string(),
+    value: z.string(),
+    type: z.enum(['text', 'wallet', 'media']),
+    /** Client-side only — file accept filter for the file picker (not persisted). */
+    accept: z.string().optional(),
+    /** Client-side only — placeholder text for the value input (not persisted). */
+    placeholder: z.string().optional(),
+  })).optional(),
+  shape: z.string().optional(),
+  simplex: z.string().optional(),
+});
+
+type FormValues = z.infer<typeof formSchema>;
+
+type CropState = {
+  imageSrc: string;
+  aspect: number;
+  field: 'picture' | 'banner';
+  title: string;
+};
+
+// ── Sortable field row ─────────────────────────────────────────────────────
+
+interface SortableFieldRowProps {
+  id: string;
+  index: number;
+  type: 'text' | 'wallet' | 'media';
+  accept?: string;
+  valuePlaceholder?: string;
+  isUploading?: boolean;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  control: any;
+  onRemove: () => void;
+  onMediaPick: () => void;
+  onTickerChange: (ticker: string) => void;
+}
+
+function SortableFieldRow({ id, index, type, accept, valuePlaceholder, isUploading: fieldUploading, control, onRemove, onMediaPick, onTickerChange }: SortableFieldRowProps) {
+  const formatHint = type === 'media' ? getFormatHintForAccept(accept) : undefined;
+
+  return (
+    <SortableItem id={id} className="items-start" gripClassName="w-6 h-9">
+      <div className="grid grid-cols-[1fr,2fr,auto] gap-2 items-start">
+      {/* Label column — varies by type */}
+      {type === 'wallet' ? (
+        <FormField
+          control={control}
+          name={`fields.${index}.label`}
+          render={({ field }) => (
+            <FormItem>
+              <Select value={field.value} onValueChange={(v) => { field.onChange(v); onTickerChange(v); }}>
+                <FormControl>
+                  <SelectTrigger className="h-9">
+                    <SelectValue placeholder="Ticker" />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent>
+                  {WALLET_TICKERS.map((t) => (
+                    <SelectItem key={t} value={t}>{t}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      ) : (
+        <FormField
+          control={control}
+          name={`fields.${index}.label`}
+          render={({ field }) => (
+            <FormItem>
+              <FormControl>
+                <Input placeholder="Label" {...field} className="h-9" />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      )}
+
+      {/* Value column — media gets upload button with tooltip, others get text input */}
+      {type === 'media' ? (
+        <FormField
+          control={control}
+          name={`fields.${index}.value`}
+          render={({ field }) => {
+            const mismatchWarning = getMediaMismatchWarning(field.value, accept);
+            return (
+              <FormItem>
+                <div className="flex gap-1.5">
+                  <FormControl>
+                    <Input placeholder={valuePlaceholder || 'Upload file or paste direct file link'} {...field} className="h-9 flex-1 min-w-0" readOnly={false} />
+                  </FormControl>
+                  {fieldUploading ? (
+                    <div className="flex items-center justify-center h-9 w-9 shrink-0">
+                      <Loader2 className="size-4 animate-spin text-muted-foreground" />
+                    </div>
+                  ) : (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="icon"
+                          className="h-9 w-9 shrink-0"
+                          onClick={onMediaPick}
+                        >
+                          <Upload className="size-4" />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="text-xs max-w-52">
+                        {formatHint ? (
+                          <span>Choose file to upload<br /><span className="text-muted-foreground">{formatHint}</span></span>
+                        ) : (
+                          <span>Choose a media file to upload</span>
+                        )}
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
+                {mismatchWarning && (
+                  <p className="flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-500 mt-1 leading-snug">
+                    <AlertTriangle className="size-3.5 shrink-0 mt-0.5" />
+                    <span>{mismatchWarning}</span>
+                  </p>
+                )}
+                <FormMessage />
+              </FormItem>
+            );
+          }}
+        />
+      ) : (
+        <FormField
+          control={control}
+          name={`fields.${index}.value`}
+          render={({ field }) => (
+            <FormItem>
+              <FormControl>
+                <Input placeholder={type === 'wallet' ? 'Address' : 'Value or URL'} {...field} className="h-9" />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      )}
+
+      {/* Delete button */}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon"
+        onClick={onRemove}
+        className="h-9 w-9 text-destructive hover:text-destructive"
+      >
+        <Trash2 className="size-4" />
+      </Button>
+      </div>
+    </SortableItem>
+  );
+}
+
+/** Returns true if a SimpleX value can be opened as a link. */
+function isSimplexLink(value: string): boolean {
+  const trimmed = value.trim();
+  return trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('simplex:');
+}
+
+interface SimpleXContactFieldProps {
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+}
+
+/** SimpleX contact input with Open, Copy, and QR actions. */
+function SimpleXContactField({ value, onChange, disabled }: SimpleXContactFieldProps) {
+  const { toast } = useToast();
+  const [copied, setCopied] = useState(false);
+  const [qrOpen, setQrOpen] = useState(false);
+  const trimmed = value.trim();
+  const canOpen = isSimplexLink(trimmed);
+
+  const handleCopy = useCallback(async () => {
+    if (!trimmed) return;
+    try {
+      await navigator.clipboard.writeText(trimmed);
+      setCopied(true);
+      toast({ title: 'Copied', description: 'SimpleX contact copied to clipboard' });
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      toast({ title: 'Copy failed', description: 'Could not access the clipboard.', variant: 'destructive' });
+    }
+  }, [trimmed, toast]);
+
+  const handleOpen = useCallback(() => {
+    if (!canOpen) {
+      toast({ title: 'Not a link', description: 'Save a SimpleX link to open it.', variant: 'destructive' });
+      return;
+    }
+    void openUrl(trimmed);
+  }, [canOpen, trimmed, toast]);
+
+  return (
+    <FormItem>
+      <div className="grid grid-cols-[auto,1fr,auto] gap-2 items-start">
+        <div className="w-6" />
+        <div className="space-y-1.5 min-w-0">
+          <div className="flex items-center gap-1.5">
+            <MessageCircle className="size-4 text-muted-foreground" />
+            <FormLabel className="text-sm font-normal">SimpleX</FormLabel>
+            <HelpTip faqId="simplex-private-contact" iconSize="size-3.5" />
+          </div>
+          <FormControl>
+            <Input
+              placeholder="simplex:/contact#/?v=..."
+              value={value}
+              onChange={(e) => onChange(e.target.value)}
+              disabled={disabled}
+              className="h-9"
+            />
+          </FormControl>
+          <FormDescription className="text-xs">Share this in incognito mode for private contact.</FormDescription>
+        </div>
+        <div className="flex items-center gap-1 pt-6">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-9 w-9"
+              onClick={handleOpen}
+              disabled={!canOpen || disabled}
+              aria-label="Open SimpleX link"
+            >
+              <ExternalLink className="size-4" />
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-xs">Open SimpleX link</TooltipContent>
+        </Tooltip>
+
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="outline"
+              size="icon"
+              className="h-9 w-9"
+              onClick={handleCopy}
+              disabled={!trimmed || disabled}
+              aria-label="Copy SimpleX contact"
+            >
+              {copied ? <Check className="size-4 text-green-500" /> : <Copy className="size-4" />}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="text-xs">Copy</TooltipContent>
+        </Tooltip>
+
+        <Dialog open={qrOpen} onOpenChange={setQrOpen}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <DialogTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon"
+                  className="h-9 w-9"
+                  disabled={!trimmed || disabled}
+                  aria-label="Show SimpleX QR code"
+                >
+                  <QrCode className="size-4" />
+                </Button>
+              </DialogTrigger>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">Show QR code</TooltipContent>
+          </Tooltip>
+          <DialogContent className="sm:max-w-[360px] p-6 overflow-hidden rounded-2xl [&>button]:top-6 [&>button]:right-6">
+            <div className="min-w-0">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <div className="size-7 rounded-full bg-emerald-500 flex items-center justify-center shrink-0">
+                    <MessageCircle className="size-4 text-white" />
+                  </div>
+                  <span>SimpleX</span>
+                </DialogTitle>
+              </DialogHeader>
+
+              <div className="flex justify-center my-5">
+                <div className="bg-white p-3 rounded-xl">
+                  {trimmed ? (
+                    <QRCodeCanvas value={trimmed} size={220} className="size-[220px]" />
+                  ) : (
+                    <div className="size-[220px] bg-muted animate-pulse rounded" />
+                  )}
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleCopy}
+                className="flex items-center gap-2 w-full bg-secondary/60 hover:bg-secondary/80 transition-colors rounded-lg pl-3 pr-2.5 py-2.5 text-left cursor-pointer overflow-hidden"
+              >
+                <span className="min-w-0 font-mono text-xs truncate">{trimmed}</span>
+                <span className="shrink-0 ml-auto">
+                  {copied ? <Check className="size-4 text-green-500" /> : <Copy className="size-4 text-muted-foreground" />}
+                </span>
+              </button>
+
+              <p className="text-xs text-muted-foreground text-center mt-4">
+                Share this QR in incognito mode for private contact.
+              </p>
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
+    </div>
+    </FormItem>
+  );
+}
+
+// ── Main component ────────────────────────────────────────────────────────────
+
+export function ProfileSettings() {
+  const { hash } = useLocation();
+  const { user, metadata, event } = useCurrentUser();
+  const { config } = useAppContext();
+  const queryClient = useQueryClient();
+
+  // Scroll to the donations section when navigating from the profile menu.
+  useEffect(() => {
+    if (hash === '#donations') {
+      const el = document.getElementById('donations');
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+  }, [hash]);
+  const { mutateAsync: publishEvent, isPending } = useNostrPublish();
+  const { mutateAsync: uploadFile, isPending: isUploading } = useUploadFile();
+  const { toast } = useToast();
+  const { isEnabled } = usePublishPreferences();
+
+  const [cropState, setCropState] = useState<CropState | null>(null);
+  const [showAdvanced, setShowAdvanced] = useState(false);
+  const [showMobilePreview, setShowMobilePreview] = useState(false);
+  const [uploadingFieldIndex, setUploadingFieldIndex] = useState<number>(-1);
+
+  useSeoMeta({
+    title: `Profile | Settings | ${config.appName}`,
+    description: `Edit your ${config.appName} profile`,
+  });
+
+  // Parse existing custom fields from raw event
+  const parseFields = (): Array<{ label: string; value: string; type: 'text' | 'wallet' | 'media'; accept?: string }> => {
+    if (!event) return [];
+    try {
+      const parsed = JSON.parse(event.content);
+      if (Array.isArray(parsed.fields)) {
+        return parsed.fields
+          .filter((f: unknown) => Array.isArray(f) && f.length >= 2 && String(f[0]).toLowerCase() !== 'simplex')
+          .map((f: string[]) => {
+            const type = inferFieldType(f[0], f[1]);
+            // Ensure wallet labels carry the $ prefix so the Select value matches (e.g. "BTC" → "$BTC")
+            const label = type === 'wallet' && !f[0].startsWith('$')
+              ? `$${f[0].toUpperCase()}`
+              : f[0];
+            const accept = type === 'media' ? inferAcceptFromValue(f[1]) : undefined;
+            return { label, value: f[1], type, accept };
+          });
+      }
+    } catch { /* ignore */ }
+    return [];
+  };
+
+  const parseShape = (): string => {
+    if (!event) return '';
+    try {
+      const parsed = JSON.parse(event.content);
+      if (isValidAvatarShape(parsed.shape)) return parsed.shape;
+    } catch { /* ignore */ }
+    return '';
+  };
+
+  const parseSimplex = (): string => {
+    if (!event) return '';
+    try {
+      const parsed = JSON.parse(event.content);
+      if (Array.isArray(parsed.fields)) {
+        const found = parsed.fields.find((f: unknown) => Array.isArray(f) && f.length >= 2 && String(f[0]).toLowerCase() === 'simplex');
+        if (found && typeof found[1] === 'string') return found[1];
+      }
+    } catch { /* ignore */ }
+    return '';
+  };
+
+  const form = useForm<FormValues>({
+    resolver: zodResolver(formSchema),
+    defaultValues: {
+      name: '', about: '', picture: '', banner: '',
+      website: '', nip05: '', lud16: '', bot: false, fields: [],
+      shape: '',
+    },
+  });
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const { fields, append, remove, move } = useFieldArray({ control: form.control as any, name: 'fields' });
+
+  const handleFieldReorder = useCallback((reordered: typeof fields) => {
+    // Map reordered items back to move() calls by finding the first mismatch
+    const oldIndex = fields.findIndex((f, i) => f.id !== reordered[i]?.id);
+    if (oldIndex === -1) return;
+    const newIndex = reordered.findIndex((f) => f.id === fields[oldIndex].id);
+    if (newIndex === -1) return;
+    move(oldIndex, newIndex);
+  }, [fields, move]);
+
+  // Media field upload — dynamic accept attribute per field
+  const mediaInputRef = useRef<HTMLInputElement>(null);
+  const pendingMediaIndex = useRef<number>(-1);
+  const handleMediaPick = (index: number) => {
+    pendingMediaIndex.current = index;
+    // Dynamically set the accept attribute based on the field's preset
+    const fieldAccept = form.getValues(`fields.${index}.accept`);
+    if (mediaInputRef.current) {
+      mediaInputRef.current.accept = fieldAccept || 'image/*,video/*,audio/*';
+    }
+    mediaInputRef.current?.click();
+  };
+  const handleMediaFileChosen = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    const index = pendingMediaIndex.current;
+    if (index < 0) return;
+    setUploadingFieldIndex(index);
+    try {
+      const [[, url]] = await uploadFile(file);
+      form.setValue(`fields.${index}.value`, url, { shouldDirty: true });
+      toast({ title: 'Uploaded', description: 'Media file uploaded' });
+    } catch {
+      toast({ title: 'Upload failed', description: 'Please try again.', variant: 'destructive' });
+    } finally {
+      setUploadingFieldIndex(-1);
+    }
+  };
+
+  useEffect(() => {
+    if (metadata) {
+      form.reset({
+        name: metadata.name ?? '',
+        about: metadata.about ?? '',
+        picture: metadata.picture ?? '',
+        banner: metadata.banner ?? '',
+        website: metadata.website ?? '',
+        nip05: metadata.nip05 ?? '',
+        lud16: metadata.lud16 ?? '',
+        bot: metadata.bot ?? false,
+        fields: parseFields(),
+        shape: parseShape(),
+        simplex: parseSimplex(),
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metadata, event]);
+
+  // Live values for the card preview
+  const watched = form.watch();
+  const cardMetadata: Partial<NostrMetadata> & { shape?: string } = {
+    name: watched.name,
+    about: watched.about,
+    picture: watched.picture,
+    banner: watched.banner,
+    website: watched.website,
+    nip05: watched.nip05,
+    lud16: watched.lud16,
+    bot: watched.bot,
+    shape: watched.shape,
+  };
+
+  // Live sidebar preview fields — computed from watched form values
+  const previewFields = useMemo(() => {
+    const result: Array<{ label: string; value: string }> = [];
+    // Add website if present
+    if (watched.website?.trim()) {
+      result.push({ label: 'Website', value: watched.website.trim() });
+    }
+    // Add SimpleX private contact if present
+    if (watched.simplex?.trim()) {
+      result.push({ label: 'SimpleX', value: watched.simplex.trim() });
+    }
+    // Add custom fields that have both label and value
+    if (watched.fields) {
+      for (const f of watched.fields) {
+        if (f.label.trim() && f.value.trim()) {
+          result.push({ label: f.label, value: f.value });
+        }
+      }
+    }
+    return result;
+  }, [watched.website, watched.simplex, watched.fields]);
+
+  // Card onChange: patch individual fields
+  const handleCardChange = (patch: Partial<NostrMetadata>) => {
+    for (const [k, v] of Object.entries(patch)) {
+      form.setValue(k as keyof FormValues, v as string, { shouldDirty: true });
+    }
+  };
+
+  // Image pick: open crop dialog
+  const pickInputRef = useRef<HTMLInputElement>(null);
+  const pendingField = useRef<'picture' | 'banner'>('picture');
+  const paymentTargetsRef = useRef<PaymentTargetsEditorHandle>(null);
+
+  const handlePickImage = (field: 'picture' | 'banner') => {
+    pendingField.current = field;
+    pickInputRef.current?.click();
+  };
+
+  const handleFileChosen = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    e.target.value = '';
+    const field = pendingField.current;
+    setCropState({
+      imageSrc: URL.createObjectURL(file),
+      aspect: field === 'picture' ? 1 : 3,
+      field,
+      title: field === 'picture' ? 'Crop Profile Picture' : 'Crop Banner',
+    });
+  };
+
+  const handleCropConfirm = async (blob: Blob) => {
+    if (!cropState) return;
+    const { field, imageSrc } = cropState;
+    URL.revokeObjectURL(imageSrc);
+    setCropState(null);
+    try {
+      const file = new File([blob], `${field}.jpg`, { type: 'image/jpeg' });
+      const [[, url]] = await uploadFile(file);
+      form.setValue(field, url, { shouldDirty: true });
+      toast({ title: 'Uploaded', description: `${field === 'picture' ? 'Profile picture' : 'Banner'} updated` });
+    } catch {
+      toast({ title: 'Upload failed', description: 'Please try again.', variant: 'destructive' });
+    }
+  };
+
+  const handleCropCancel = () => {
+    if (cropState) URL.revokeObjectURL(cropState.imageSrc);
+    setCropState(null);
+  };
+
+  // Handle adding a field from a preset
+  const handleAddPreset = (preset: FieldPreset) => {
+    append({
+      label: preset.defaultLabel,
+      value: '',
+      type: preset.type,
+      accept: preset.accept,
+      placeholder: preset.valuePlaceholder,
+    });
+  };
+
+  const onSubmit = async (values: FormValues) => {
+    if (!user) return;
+    if (!isEnabled('profile')) {
+      toast({
+        title: 'Profile publishing disabled',
+        description: 'Turn on “Profile metadata” in Settings → Privacy & Publishing to update your profile.',
+        variant: 'destructive',
+      });
+      return;
+    }
+    try {
+      const { fields: customFields, shape, simplex, ...standardMetadata } = values;
+      const data: Record<string, unknown> = { ...metadata, ...standardMetadata };
+
+      // Add shape only if set (an emoji string)
+      if (shape && isValidAvatarShape(shape)) {
+        data.shape = shape;
+      } else {
+        delete data.shape;
+      }
+
+      for (const key in data) {
+        if (data[key] === '') delete data[key];
+      }
+
+      // Build custom fields from scratch so removing all fields (or SimpleX) is reflected.
+      const nonEmpty = (customFields ?? []).filter((f) => f.label.trim() && f.value.trim());
+      if (simplex?.trim()) {
+        nonEmpty.push({ label: 'SimpleX', value: simplex.trim(), type: 'text' as const });
+      }
+      if (nonEmpty.length > 0) {
+        data.fields = nonEmpty.map((f) => [f.label, f.value]);
+      } else {
+        delete data.fields;
+      }
+      await publishEvent({ kind: 0, content: JSON.stringify(data), tags: [] });
+      queryClient.invalidateQueries({ queryKey: ['logins'] });
+      queryClient.invalidateQueries({ queryKey: ['author', user.pubkey] });
+
+      // Persist payment targets (kind 10133) alongside the profile. If it
+      // fails or doesn't validate, the editor surfaces its own error toast;
+      // skip the success confirmation so the user knows something was off.
+      const targetsSaved = (await paymentTargetsRef.current?.save()) ?? true;
+      if (!targetsSaved) return;
+
+      toast({ title: 'Profile saved' });
+    } catch {
+      toast({ title: 'Error', description: 'Failed to save profile.', variant: 'destructive' });
+    }
+  };
+
+  // Inject live sidebar preview into the app's right sidebar slot
+  useLayoutOptions({
+    rightSidebar: <ProfileRightSidebar fields={previewFields} pubkey={user?.pubkey} />,
+  });
+
+  // Whether the mobile top bar has slid away (user scrolled down). The sticky
+  // page header follows it up to top-0 so no gap opens above it — the same
+  // "pinned" behavior SubHeaderBar implements for tab bars.
+  const navHidden = useNavHidden();
+
+  if (!user) return <Navigate to="/settings" replace />;
+
+  const busy = isPending || isUploading;
+
+  return (
+    <main className="min-h-screen">
+      {/* Hidden file input for avatar/banner */}
+      <input
+        ref={pickInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={handleFileChosen}
+      />
+      {/* Hidden file input for media fields — accept is set dynamically */}
+      <input
+        ref={mediaInputRef}
+        type="file"
+        accept="image/*,video/*,audio/*"
+        className="hidden"
+        onChange={handleMediaFileChosen}
+      />
+
+      {/* Crop dialog */}
+      {cropState && (
+        <ImageCropDialog
+          open
+          imageSrc={cropState.imageSrc}
+          aspect={cropState.aspect}
+          title={cropState.title}
+          onCancel={handleCropCancel}
+          onCrop={handleCropConfirm}
+        />
+      )}
+
+      {/* Header — sticks to the top so Save stays reachable while scrolling.
+          When the mobile top bar hides on scroll, slide up to top-0 (with
+          safe-area padding) instead of leaving a gap, mirroring
+          SubHeaderBar's `pinned` mode. */}
+      <PageHeader
+        title="Profile"
+        backTo="/settings"
+        alwaysShowBack
+        className={cn(
+          'sticky top-mobile-bar sidebar:top-0 z-20 backdrop-blur-md border-b border-border',
+          'max-sidebar:transition-[top,padding-top] max-sidebar:duration-300 max-sidebar:ease-in-out',
+          navHidden && 'header-pinned-top',
+        )}
+        titleContent={
+          <div className="flex-1 min-w-0">
+            <h1 className="text-xl font-bold leading-tight">Profile</h1>
+          </div>
+        }
+      >
+        <Button type="submit" form="profile-settings-form" size="sm" className="shrink-0 rounded-full font-bold px-5" disabled={busy}>
+          {busy ? <Loader2 className="size-3.5 animate-spin" /> : 'Save'}
+        </Button>
+      </PageHeader>
+
+      <Form {...form}>
+        <form id="profile-settings-form" onSubmit={form.handleSubmit(onSubmit)} className="max-w-xl mx-auto px-4 pb-10 space-y-6">
+
+          {/* Intro */}
+          <div className="flex items-center gap-4 px-3 pt-2 pb-2">
+            <IntroImage src="/profile-intro.png" />
+            <div className="min-w-0">
+              <h2 className="text-sm font-semibold">Your Identity</h2>
+              <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+                Tap any field on the card to edit. Click your avatar or banner to upload and crop a new image.
+              </p>
+            </div>
+          </div>
+
+          {/* Interactive profile card */}
+          <ProfileCard
+            pubkey={user.pubkey}
+            metadata={cardMetadata}
+            onChange={handleCardChange}
+            onPickImage={handlePickImage}
+            onAvatarShape={(shape) => form.setValue('shape', shape, { shouldDirty: true })}
+            onRemoveAvatar={() => form.setValue('picture', '', { shouldDirty: true })}
+          />
+
+          {isUploading && (
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <Loader2 className="size-3.5 animate-spin" />
+              Uploading…
+            </div>
+          )}
+
+          {/* Profile fields */}
+          <div>
+            <h2 className="text-sm font-medium py-2 flex items-center gap-1">
+              Profile Fields
+              <HelpTip faqId="profile-fields" iconSize="size-3.5" />
+            </h2>
+
+            <div className="space-y-3 pt-1">
+              {/* Website — always first */}
+              <FormField
+                control={form.control}
+                name="website"
+                render={({ field }) => (
+                  <div className="grid grid-cols-[auto,1fr,2fr,auto] gap-2 items-center">
+                    <div className="w-6" />
+                    <div className="flex items-center h-9 px-3 text-sm text-muted-foreground">
+                      <span>Website</span>
+                    </div>
+                    <Input placeholder="https://yourwebsite.com" {...field} className="h-9" />
+                    <div className="size-9" />
+                  </div>
+                )}
+              />
+
+              {/* Lightning address */}
+              <FormField
+                control={form.control}
+                name="lud16"
+                render={({ field }) => (
+                  <div className="grid grid-cols-[auto,1fr,2fr,auto] gap-2 items-center">
+                    <div className="w-6" />
+                    <div className="flex items-center h-9 px-3 text-sm text-muted-foreground gap-1">
+                      <span>Lightning</span>
+                      <HelpTip faqId="what-are-zaps" iconSize="size-3.5" />
+                    </div>
+                    <Input placeholder="you@walletofsatoshi.com" {...field} className="h-9" />
+                    <div className="size-9" />
+                  </div>
+                )}
+              />
+
+              {/* SimpleX private contact */}
+              <FormField
+                control={form.control}
+                name="simplex"
+                render={({ field }) => (
+                  <SimpleXContactField value={field.value ?? ''} onChange={field.onChange} disabled={busy} />
+                )}
+              />
+
+              <SortableList
+                items={fields}
+                getItemId={(field) => field.id}
+                onReorder={handleFieldReorder}
+                className="space-y-3"
+                renderItem={(field, index) => (
+                  <SortableFieldRow
+                    key={field.id}
+                    id={field.id}
+                    index={index}
+                    type={form.watch(`fields.${index}.type`) ?? 'text'}
+                    accept={form.watch(`fields.${index}.accept`)}
+                    valuePlaceholder={form.watch(`fields.${index}.placeholder`)}
+                    isUploading={uploadingFieldIndex === index}
+                    control={form.control}
+                    onRemove={() => remove(index)}
+                    onMediaPick={() => handleMediaPick(index)}
+                    onTickerChange={(ticker) => form.setValue(`fields.${index}.label`, ticker, { shouldDirty: true })}
+                  />
+                )}
+              />
+
+              {/* Add field — visible pill buttons */}
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {[...FIELD_PRESETS, CUSTOM_PRESET].map((preset) => {
+                  const Icon = preset.icon;
+                  return (
+                    <Tooltip key={preset.id}>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 rounded-full px-3 text-xs gap-1.5"
+                          onClick={() => handleAddPreset(preset)}
+                        >
+                          <Plus className="size-3 text-muted-foreground" />
+                          <Icon className="size-3.5 text-muted-foreground" />
+                          {preset.label}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" className="text-xs">
+                        {preset.description}
+                      </TooltipContent>
+                    </Tooltip>
+                  );
+                })}
+              </div>
+
+            </div>
+          </div>
+
+          {/* Mobile sidebar preview — visible only below widgets where the real sidebar is hidden */}
+          <div className="lg:hidden">
+            <Collapsible open={showMobilePreview} onOpenChange={setShowMobilePreview}>
+              <CollapsibleTrigger asChild>
+                <Button type="button" variant="ghost" className="w-full justify-between px-0 h-auto hover:bg-transparent hover:text-foreground">
+                  <span className="text-sm font-medium flex items-center gap-1.5">
+                    <Eye className="size-3.5" />
+                    Profile Fields Preview
+                  </span>
+                  <ChevronDown className="size-4 text-muted-foreground transition-transform duration-200 [[data-state=open]_&]:rotate-180" strokeWidth={4} />
+                </Button>
+              </CollapsibleTrigger>
+              <CollapsibleContent className="pt-3">
+                <div className="rounded-xl border bg-card/50 overflow-hidden">
+                  <ProfileRightSidebar
+                    fields={previewFields}
+                    className="relative w-full flex flex-col h-auto max-h-[60vh] overflow-y-auto"
+                  />
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
+          </div>
+
+          {/* Accept Donations — NIP-A3 payment targets (kind 10133). Self-
+              contained: publishes its own event with its own save button,
+              independent of the kind-0 profile form above. */}
+          <div id="donations" className="border-t pt-5 scroll-mt-24">
+            <PaymentTargetsEditor ref={paymentTargetsRef} />
+          </div>
+
+          {/* Advanced */}
+          <Collapsible open={showAdvanced} onOpenChange={setShowAdvanced}>
+            <CollapsibleTrigger asChild>
+              <Button type="button" variant="ghost" className="w-full justify-between px-0 h-auto hover:bg-transparent hover:text-foreground">
+                <span className="text-sm font-medium">Advanced</span>
+                <ChevronDown className="size-4 text-muted-foreground transition-transform duration-200 [[data-state=open]_&]:rotate-180" strokeWidth={4} />
+              </Button>
+            </CollapsibleTrigger>
+            <CollapsibleContent className="pt-3 space-y-4">
+              <FormField
+                control={form.control}
+                name="bot"
+                render={({ field }) => (
+                  <FormItem className="flex items-center justify-between rounded-lg border p-3">
+                    <div>
+                      <FormLabel className="text-sm">Bot Account</FormLabel>
+                      <FormDescription className="text-xs">Mark this account as automated</FormDescription>
+                    </div>
+                    <FormControl>
+                      <Switch checked={field.value} onCheckedChange={field.onChange} />
+                    </FormControl>
+                  </FormItem>
+                )}
+              />
+
+              {/* Your Key — private-key backup. Rendered inside Advanced but is not part of the form. */}
+              <div className="pt-2">
+                <BackupKeySection />
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
+
+        </form>
+      </Form>
+    </main>
+  );
+}
+
+// ── Backup Key section ────────────────────────────────────────────────────────
+
+function BackupKeySection() {
+  const { logins } = useNostrLogin();
+  const { config } = useAppContext();
+  const { toast } = useToast();
+  const current = logins[0];
+
+  const [showKey, setShowKey] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+
+  const heading = (
+    <div className="flex items-center gap-2 pb-1">
+      <KeyRound className="size-4 text-primary/70" />
+      <h2 className="text-sm font-semibold">Your Key</h2>
+    </div>
+  );
+
+  // Not applicable for extension / bunker logins — key isn't available in 2140.wtf.
+  if (!current) return null;
+
+  if (current.type === 'extension') {
+    return (
+      <div>
+        {heading}
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          You're signed in with a browser extension (NIP-07). Your secret key is stored there — manage or export it from the extension itself.
+        </p>
+      </div>
+    );
+  }
+
+  if (current.type === 'bunker') {
+    return (
+      <div>
+        {heading}
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          You're signed in with a remote signer (NIP-46). Your secret key is held by that signer and cannot be exported from {config.appName}.
+        </p>
+      </div>
+    );
+  }
+
+  if (current.type !== 'nsec') {
+    // Unknown future login type — don't guess.
+    return null;
+  }
+
+  const nsec = current.data.nsec;
+  const npub = nip19.npubEncode(current.pubkey);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(nsec);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      toast({
+        title: 'Copy failed',
+        description: 'Could not access the clipboard. Reveal the key and copy it manually.',
+        variant: 'destructive',
+      });
+    }
+  };
+
+  const handleBackup = async () => {
+    if (isSaving) return;
+    setIsSaving(true);
+    try {
+      const result = await saveNsec(npub, nsec, config.appName);
+      if (result === 'saved-to-file') {
+        toast({
+          title: 'Secret key saved',
+          description: 'Your secret key was saved to the Documents folder on your device.',
+        });
+      } else if (result === 'saved') {
+        toast({ title: 'Secret key saved' });
+      }
+      // 'dismissed' is a deliberate user choice — no toast.
+    } catch {
+      toast({
+        title: 'Save failed',
+        description: 'Could not save the key. Please copy it manually.',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-4">
+      {heading}
+      <p className="text-xs text-muted-foreground leading-relaxed">
+        This secret key controls your account on {config.appName}. Anyone with it can post, read your DMs, and impersonate you. Store it in a password manager or somewhere else only you can access.
+      </p>
+
+      <div className="relative">
+        <Input
+          type={showKey ? 'text' : 'password'}
+          value={nsec}
+          readOnly
+          onFocus={(e) => e.currentTarget.select()}
+          onClick={(e) => e.currentTarget.select()}
+          className="pr-20 font-mono text-base md:text-sm"
+          aria-label="Your secret key"
+        />
+        <div className="absolute right-0 top-0 h-full flex items-center">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-full px-2 hover:bg-transparent"
+            onClick={handleCopy}
+            aria-label="Copy secret key"
+          >
+            {copied ? (
+              <Check className="h-4 w-4 text-emerald-600" />
+            ) : (
+              <Copy className="h-4 w-4 text-muted-foreground" />
+            )}
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="h-full px-2 hover:bg-transparent"
+            onClick={() => setShowKey((v) => !v)}
+            aria-label={showKey ? 'Hide secret key' : 'Reveal secret key'}
+          >
+            {showKey ? (
+              <EyeOff className="h-4 w-4 text-muted-foreground" />
+            ) : (
+              <Eye className="h-4 w-4 text-muted-foreground" />
+            )}
+          </Button>
+        </div>
+      </div>
+
+      {showKey && (
+        <div className="p-3 bg-amber-50 dark:bg-amber-950/20 rounded-lg border border-amber-200 dark:border-amber-800 animate-in fade-in slide-in-from-top-1 duration-200">
+          <p className="text-xs text-amber-900 dark:text-amber-300 leading-relaxed">
+            NEVER share your secret key with anyone. Avoid screenshotting it or pasting it anywhere except a password manager. If shared, others will be able to access your account.
+          </p>
+        </div>
+      )}
+
+      <Button
+        type="button"
+        size="lg"
+        className="w-full gap-2 rounded-full h-12"
+        onClick={handleBackup}
+        disabled={isSaving}
+      >
+        {isSaving ? (
+          <>
+            <Loader2 className="w-4 h-4 animate-spin" /> Saving…
+          </>
+        ) : (
+          <>
+            <Download className="w-4 h-4" /> Back Up Key
+          </>
+        )}
+      </Button>
+    </div>
+  );
+}

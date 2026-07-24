@@ -1,0 +1,122 @@
+/**
+ * usePersistEvolutionProgress - Debounced persistence for evolution mission progress.
+ *
+ * Evolution missions live in the per-Pets session store (keyed by pubkey:d).
+ * This hook listens for changes and debounce-publishes the updated state to the
+ * kind 31124 Pets event content JSON so progress survives page refreshes.
+ *
+ * Design:
+ * - Listens to 'daily-missions-updated' CustomEvent (same event the tracker fires)
+ * - Only acts on events with `detail.evolution === true`
+ * - Debounces by PERSIST_DELAY_MS to batch rapid interactions
+ * - Uses fetchFreshEvent to avoid stale-read overwrites
+ * - Skips publish if evolution[] is empty (no active task process)
+ */
+
+import { useEffect, useRef, useCallback } from 'react';
+import { useNostr } from '@nostrify/react';
+import { useQueryClient } from '@tanstack/react-query';
+
+import { useCurrentUser } from '@/hooks/useCurrentUser';
+import { usePetsNostrPublish } from '@/pets/core/hooks/usePetsNostrPublish';
+import { fetchFreshPetsEvent } from '@/pets/core/lib/fetchFreshPetsEvent';
+
+import {
+  KIND_PETS_STATE,
+} from '@/pets/core/lib/pets';
+import { serializeEvolutionContent } from '@/pets/core/lib/missions';
+import { readEvolutionFromStorage } from '../lib/daily-mission-tracker';
+
+import type { NostrEvent } from '@nostrify/nostrify';
+
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/** Delay before persisting evolution progress (ms). */
+const PERSIST_DELAY_MS = 5_000;
+
+// ─── Hook ─────────────────────────────────────────────────────────────────────
+
+/**
+ * @param companionD - The d-tag of the active Pets (required for per-Pets storage)
+ * @param updateCompanionEvent - Callback to update companion in query cache
+ */
+export function usePersistEvolutionProgress(
+  companionD: string | undefined,
+  updateCompanionEvent: (event: NostrEvent) => void,
+): void {
+  const { user } = useCurrentUser();
+  const { nostr } = useNostr();
+  const { mutateAsync: publishEvent } = usePetsNostrPublish();
+  const queryClient = useQueryClient();
+
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const publishingRef = useRef(false);
+
+  const persist = useCallback(async () => {
+    const pubkey = user?.pubkey;
+    if (!pubkey || !companionD || publishingRef.current) return;
+
+    const evolution = readEvolutionFromStorage(pubkey, companionD);
+    if (!evolution || evolution.length === 0) return;
+
+    publishingRef.current = true;
+    try {
+      // Fetch the fresh Pets event from relays
+      const prev = await fetchFreshPetsEvent(nostr, {
+        kinds: [KIND_PETS_STATE],
+        authors: [pubkey],
+        '#d': [companionD],
+      });
+
+      if (!prev) {
+        console.warn('[PersistEvolution] No NOSTR PET event found for d-tag:', companionD);
+        return;
+      }
+
+      const content = serializeEvolutionContent(prev.content, evolution);
+
+      // Skip publish if the content is already up-to-date.
+      // This avoids redundant replaceable-event publishes when the
+      // primary interaction write path already persisted the same data.
+      if (content === prev.content) return;
+
+      const event = await publishEvent({
+        kind: KIND_PETS_STATE,
+        content,
+        tags: prev.tags,
+        prev,
+      });
+
+      updateCompanionEvent(event);
+      queryClient.invalidateQueries({ queryKey: ['pets-collection', pubkey] });
+    } finally {
+      publishingRef.current = false;
+    }
+  }, [user?.pubkey, companionD, nostr, publishEvent, updateCompanionEvent, queryClient]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail?.evolution) return;
+
+      // Only react to evolution updates for the active companion.
+      // detail.d is set by trackEvolutionMissionTally/Event; if absent
+      // (legacy caller), accept it to avoid silently dropping updates.
+      if (detail.d && detail.d !== companionD) return;
+
+      // Clear any pending timer and restart the debounce
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => {
+        persist().catch((err) => {
+          console.warn('[PersistEvolution] Failed to persist:', err);
+        });
+      }, PERSIST_DELAY_MS);
+    };
+
+    window.addEventListener('daily-missions-updated', handler);
+    return () => {
+      window.removeEventListener('daily-missions-updated', handler);
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, [persist, companionD]);
+}

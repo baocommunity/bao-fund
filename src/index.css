@@ -1,0 +1,1703 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --radius: 0.75rem;
+    --success: 142 72% 29%;
+    --success-foreground: 138 60% 94%;
+    /* Mobile chrome dimensions — referenced by layout utility classes below */
+    --top-bar-height: 2.5rem;   /* MobileTopBar h-10 = 40px */
+    --bottom-nav-height: 2.75rem; /* MobileBottomNav h-11 = 44px */
+    /* Pets room canvas: vertical space reserved for the bottom dock */
+    --pets-room-dock-height: 82px; /* Desktop: pt-2.5 + carousel(48) + pb-6(24) */
+    /* ₿AO chat chrome surfaces: structural framing (chat header, channel
+       sidebar, member roster). Derived from shadcn tokens so custom themes
+       retint them automatically. */
+    --chrome: var(--muted);
+    --chrome-deep: var(--muted);
+    --chrome-divider: var(--border);
+    /* Safe-area bottom padding bases for the chat panes (see .pb-safe). */
+    --safe-area-pad-bottom: max(0.75rem, var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+    --safe-area-pad-bottom-tight: max(0.25rem, var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  }
+
+  .dark {
+    --success: 142 60% 22%;
+    --success-foreground: 138 60% 94%;
+  }
+
+  /* Mobile: Pets room dock includes bottom-nav clearance + safe-area */
+  @media (max-width: 899px) {
+    :root {
+      --pets-room-dock-height: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom, 0px) + 74px);
+    }
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+    scrollbar-width: none;
+  }
+
+  *::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Visible thin scrollbar inside the room editor modal */
+  .pets-room-editor-scroll {
+    scrollbar-width: thin;
+    scrollbar-gutter: stable;
+  }
+  .pets-room-editor-scroll::-webkit-scrollbar {
+    display: block;
+    width: 6px;
+  }
+  .pets-room-editor-scroll::-webkit-scrollbar-thumb {
+    background: hsl(var(--muted-foreground) / 0.25);
+    border-radius: 999px;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+@layer utilities {
+  /* ── ₿AO chat chrome surfaces ───────────────────────────────────────────
+     Structural framing (chat header, channel sidebar, member roster). */
+  .bg-chrome { background-color: hsl(var(--chrome)); }
+  .bg-chrome-deep { background-color: hsl(var(--chrome-deep)); }
+  .bg-chrome-divider { background-color: hsl(var(--chrome-divider)); }
+  .border-chrome { border-color: hsl(var(--chrome-divider)); }
+
+  /* Cut-corner panel — the ₿AO chat "vessel" shape (channel rows, sidebar,
+     chat header, dialogs). Rounded corners with two opposite corners sliced
+     into a flat diagonal chamfer. */
+  .clip-corner-lg {
+    --cut: 0.7rem;
+    border-radius: 0.55rem;
+    clip-path: polygon(
+      var(--cut) 0,
+      100% 0,
+      100% calc(100% - var(--cut)),
+      calc(100% - var(--cut)) 100%,
+      0 100%,
+      0 var(--cut)
+    );
+  }
+
+  /* Chart-rule gutter tick: a thin bar in the left gutter that lights up on
+     hover and glows when the row also has .is-active. */
+  .gutter-tick {
+    position: relative;
+  }
+  .gutter-tick::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 0;
+    width: 2px;
+    border-radius: 2px;
+    background: hsl(var(--primary));
+    opacity: 0;
+    transition: height 120ms ease, opacity 120ms ease, box-shadow 120ms ease;
+  }
+  .gutter-tick:hover::before {
+    height: 45%;
+    opacity: 0.6;
+  }
+  .gutter-tick.is-active::before {
+    height: 70%;
+    opacity: 1;
+    box-shadow: 0 0 8px hsl(var(--primary) / 0.7);
+  }
+
+  /* Cut-corner chrome dialog idiom (invite/roles dialogs). `.chrome-dialog`
+     establishes an inline-size container so contents size off the card's
+     width (cqw) instead of the viewport. */
+  .chrome-dialog {
+    container-type: inline-size;
+  }
+  .chrome-dialog-title {
+    font-size: clamp(1.25rem, 9cqw, 1.6rem);
+    overflow-wrap: anywhere;
+  }
+
+  /* Always-visible, styled scrollbar for primary chat scroll regions.
+     Reserves a stable gutter so the bar doesn't overlay content. */
+  .scrollbar-stable {
+    scrollbar-gutter: stable;
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent;
+  }
+  .scrollbar-stable::-webkit-scrollbar {
+    display: block;
+    width: 12px;
+    height: 12px;
+  }
+  .scrollbar-stable::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .scrollbar-stable::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.45);
+    border-radius: 9999px;
+    border: 3px solid transparent;
+    background-clip: padding-box;
+    transition: background-color 0.15s ease;
+  }
+  .scrollbar-stable:hover::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.6);
+  }
+  .scrollbar-stable::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.75);
+  }
+  .scrollbar-stable::-webkit-scrollbar-thumb:active {
+    background-color: hsl(var(--muted-foreground) / 0.9);
+  }
+  .scrollbar-stable::-webkit-scrollbar-button {
+    display: none;
+  }
+
+  /* Like safe-area-bottom, but keeps a comfortable minimum gap. In the
+     multi-pane (>=900px "sidebar") layout it drops to the tight base so the
+     account switcher, channel list footer, and composer end at the SAME
+     bottom line. */
+  .pb-safe {
+    padding-bottom: var(--safe-area-pad-bottom);
+  }
+  @media (width >= 900px) {
+    .pb-safe {
+      padding-bottom: var(--safe-area-pad-bottom-tight);
+    }
+  }
+
+  /* ── Safe-area inset utilities ────────────────────────────────────────────
+     Use var(--safe-area-inset-*, …) as the outer wrapper so that
+     Capacitor's SystemBars plugin (which injects --safe-area-inset-* CSS
+     variables on Android) takes precedence when available.  The inner
+     env(safe-area-inset-*, 0px) is the standard fallback for iOS / web. */
+
+  .safe-area-top {
+    padding-top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  }
+  
+  .safe-area-bottom {
+    padding-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  }
+  
+  .safe-area-inset-top {
+    top: var(--safe-area-inset-top, env(safe-area-inset-top, 0px));
+  }
+  
+  .safe-area-inset-bottom {
+    bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px));
+  }
+  
+  /* FAB bottom offset: clears bottom nav + safe area inset on mobile */
+  .bottom-fab {
+    bottom: calc(1.5rem + var(--bottom-nav-height) + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  }
+
+  /* Position above mobile bottom nav + safe area + arc overhang (28px) */
+  .bottom-mobile-nav {
+    bottom: calc(var(--bottom-nav-height) + 28px + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  }
+
+  /* Bottom overscroll padding for the center column:
+     clears the mobile bottom nav + safe area + generous extra space
+     so content can be scrolled well past the bottom bar and FAB. */
+  .pb-overscroll {
+    padding-bottom: calc(max(120px, 14vh) + var(--bottom-nav-height) + var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  }
+
+  @media (min-width: 900px) {
+    .pb-overscroll {
+      padding-bottom: 10vh;
+    }
+  }
+
+  /* Mobile top bar height + safe area inset for sticky elements */
+  .top-mobile-bar {
+    top: calc(var(--top-bar-height) + var(--safe-area-inset-top, env(safe-area-inset-top, 0px)));
+  }
+
+  /* New-posts pill: just below the SubHeaderBar on both mobile and desktop */
+  .new-posts-pill {
+    top: calc(var(--top-bar-height) + var(--safe-area-inset-top, env(safe-area-inset-top, 0px)) + 3.5rem);
+  }
+  @media (min-width: 900px) {
+    .new-posts-pill {
+      top: 4rem;
+    }
+  }
+
+
+
+  /* Slide the sub-header bar out of view together with the mobile top bar.
+     Must clear its own height (100%) + top bar + safe area + arc overhang (20px). */
+  @media (max-width: 899px) {
+    .nav-hidden-slide {
+      transform: translateY(calc(-100% - var(--top-bar-height) - 20px - var(--safe-area-inset-top, env(safe-area-inset-top, 0px))));
+    }
+  }
+
+  /* Negative margin to pull content area up behind the mobile top bar (only when it's visible) */
+  @media (max-width: 899px) {
+    .-mt-mobile-bar {
+      margin-top: calc(-1 * var(--top-bar-height) - var(--safe-area-inset-top, env(safe-area-inset-top, 0px)));
+      padding-top: calc(var(--top-bar-height) + var(--safe-area-inset-top, env(safe-area-inset-top, 0px)));
+    }
+  }
+
+  /* Pinned sticky page header (counterpart of SubHeaderBar's pinned mode for
+     full PageHeader-style headers): when the mobile top bar slides away, move
+     from top-mobile-bar to the very top and absorb the device safe area into
+     the header's own padding (1rem = the header's py-4). Toggled alongside
+     a transition-[top,padding-top] for a smooth slide. */
+  @media (max-width: 899px) {
+    .header-pinned-top {
+      top: 0 !important;
+      padding-top: calc(1rem + var(--safe-area-inset-top, env(safe-area-inset-top, 0px))) !important;
+    }
+  }
+
+  /* Live stream page height on mobile: full viewport minus top bar, bottom nav, and safe-area insets */
+  .livestream-height {
+    height: calc(100dvh - var(--top-bar-height) - var(--bottom-nav-height) - var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+    max-height: calc(100dvh - var(--top-bar-height) - var(--bottom-nav-height) - var(--safe-area-inset-bottom, env(safe-area-inset-bottom, 0px)));
+  }
+  /* Above the sidebar breakpoint the mobile top bar and bottom nav are hidden,
+     so the locked layout gets the full viewport */
+  @media (min-width: 900px) {
+    .livestream-height {
+      height: 100dvh;
+      max-height: 100dvh;
+    }
+  }
+
+  /* Short-video slide height: full viewport on mobile (top bar + bottom nav are
+     both hidden for an immersive experience). Tab bar floats over video. */
+  .short-video-slide-height {
+    height: 100dvh;
+  }
+}
+
+
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+/* 3-burst ping: pulses 3 times then stops */
+@keyframes ping-3 {
+  0%  { transform: scale(1); opacity: 0.6; }
+  11% { transform: scale(2); opacity: 0; }
+  22% { transform: scale(1); opacity: 0; }
+  33% { transform: scale(1); opacity: 0.6; }
+  44% { transform: scale(2); opacity: 0; }
+  55% { transform: scale(1); opacity: 0; }
+  66% { transform: scale(1); opacity: 0.6; }
+  77% { transform: scale(2); opacity: 0; }
+  100% { transform: scale(1); opacity: 0; }
+}
+
+.animate-ping-3 {
+  animation: ping-3 4s ease-out forwards;
+}
+
+/* Slow continuous pulse for nagging buttons */
+@keyframes pulse-slow {
+  0%, 100% { transform: scale(1); opacity: 0.5; }
+  50% { transform: scale(1.8); opacity: 0; }
+}
+
+.animate-pulse-slow {
+  animation: pulse-slow 2.5s ease-in-out infinite;
+}
+
+/* Eerie sigil glow pulse */
+@keyframes sigil-glow {
+  0%, 100% { opacity: 0.12; filter: drop-shadow(0 0 4px hsl(var(--primary) / 0.3)); }
+  50%       { opacity: 0.28; filter: drop-shadow(0 0 12px hsl(var(--primary) / 0.6)) drop-shadow(0 0 24px hsl(var(--primary) / 0.25)); }
+}
+
+.animate-sigil-glow {
+  animation: sigil-glow 4s ease-in-out infinite;
+}
+
+/* Eyeball blink animation - eyelid sweeps down then back up */
+@keyframes eyelid-blink {
+  0%   { transform: translateY(-100%); }
+  50%  { transform: translateY(0%); }
+  100% { transform: translateY(-100%); }
+}
+
+.animate-eyelid-blink {
+  animation: eyelid-blink 0.5s cubic-bezier(0.4, 0, 0.6, 1) forwards;
+}
+
+/* Landing hero staggered fade-in */
+@keyframes landing-hero-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.landing-hero-fade {
+  opacity: 0;
+  animation: landing-hero-fade-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes nudge-cancel-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 0.6; }
+}
+
+/* ── NIP-62 Request to Vanish ───────────────────────────────────────────────── */
+
+/* Animated caution stripes — red/dark diagonal bands that scroll */
+.vanish-stripes {
+  background: repeating-linear-gradient(
+    -45deg,
+    hsl(0 72% 51% / 0.7),
+    hsl(0 72% 51% / 0.7) 10px,
+    hsl(0 72% 51% / 0.25) 10px,
+    hsl(0 72% 51% / 0.25) 20px
+  );
+  background-size: 28.28px 28.28px;
+  animation: vanish-stripe-scroll 1.5s linear infinite;
+}
+
+:is(.dark) .vanish-stripes {
+  background: repeating-linear-gradient(
+    -45deg,
+    hsl(0 72% 51% / 0.6),
+    hsl(0 72% 51% / 0.6) 10px,
+    hsl(0 72% 51% / 0.15) 10px,
+    hsl(0 72% 51% / 0.15) 20px
+  );
+  background-size: 28.28px 28.28px;
+  animation: vanish-stripe-scroll 1.5s linear infinite;
+}
+
+@keyframes vanish-stripe-scroll {
+  from { background-position: 0 0; }
+  to { background-position: 28.28px 0; }
+}
+
+/* Glitch text effect on the /// symbol */
+.vanish-glitch-text {
+  position: relative;
+  animation: vanish-glitch 3s ease-in-out infinite;
+}
+
+@keyframes vanish-glitch {
+  0%, 90%, 100% { opacity: 1; transform: translate(0); }
+  92% { opacity: 0.8; transform: translate(-2px, 1px); }
+  94% { opacity: 0.6; transform: translate(2px, -1px); }
+  96% { opacity: 0.9; transform: translate(-1px, -1px); }
+  98% { opacity: 1; transform: translate(1px, 0); }
+}
+
+/* Ring pulse animation for the icon */
+.vanish-ring-pulse {
+  animation: vanish-ring 3s ease-out infinite;
+}
+
+.vanish-ring-pulse-delayed {
+  animation: vanish-ring 3s ease-out 1.5s infinite;
+}
+
+@keyframes vanish-ring {
+  0% { transform: scale(1); opacity: 0.4; }
+  50% { transform: scale(1.15); opacity: 0; }
+  100% { transform: scale(1); opacity: 0; }
+}
+
+/* Slow blink for the status dot */
+.vanish-blink {
+  animation: vanish-blink-kf 2s ease-in-out infinite;
+}
+
+@keyframes vanish-blink-kf {
+  0%, 40%, 100% { opacity: 1; }
+  50%, 90% { opacity: 0.2; }
+}
+
+/* ── Wii Mail envelope grid ─────────────────────────────────────────────────── */
+
+/* Staggered entrance: envelopes pop in one by one.
+   Keep the animation short and avoid large rotations so the tap target
+   doesn't shift while the user is already trying to interact. */
+@keyframes envelope-entrance {
+  0%   { opacity: 0; transform: scale(0.85) translateY(12px); }
+  70%  { opacity: 1; transform: scale(1.02) translateY(-1px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.envelope-card {
+  animation: envelope-entrance 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+  animation-delay: var(--entrance-delay, 0ms);
+  transform-origin: center bottom;
+  cursor: pointer;
+}
+
+/* Hover wobble — playful Wii-style oscillation */
+@keyframes envelope-wobble {
+  0%   { transform: rotate(0deg); }
+  15%  { transform: rotate(-5deg); }
+  30%  { transform: rotate(4deg); }
+  45%  { transform: rotate(-3deg); }
+  60%  { transform: rotate(2deg); }
+  75%  { transform: rotate(-1deg); }
+  100% { transform: rotate(0deg); }
+}
+
+.envelope-body {
+  transition: transform 0.15s ease;
+}
+
+/* Wobble only on true pointer hover — skip on touch where :hover sticks
+   and the rotation shifts the tap target, making repeated taps miss. */
+@media (hover: hover) and (pointer: fine) {
+  .envelope-card:hover .envelope-body,
+  .envelope-card:focus-visible .envelope-body {
+    animation: envelope-wobble 0.5s ease-in-out;
+  }
+}
+
+.envelope-card:active .envelope-body {
+  transform: scale(0.95);
+  animation: none;
+}
+
+/* Envelope skeleton shimmer */
+@keyframes envelope-skeleton-shimmer {
+  0%   { opacity: 0.4; }
+  50%  { opacity: 0.7; }
+  100% { opacity: 0.4; }
+}
+
+.envelope-skeleton {
+  animation: envelope-skeleton-shimmer 1.5s ease-in-out infinite;
+}
+
+/* Reduced motion: disable envelope animations */
+@media (prefers-reduced-motion: reduce) {
+  .envelope-card {
+    animation: none;
+    opacity: 1;
+  }
+  .envelope-card:hover .envelope-body,
+  .envelope-card:focus-visible .envelope-body {
+    animation: none;
+  }
+}
+
+/* Drawn SVG stickers — ensure inline SVGs fill their container */
+[data-sticker] svg,
+.sticker-svg-wrap svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Reduced motion: disable all vanish animations */
+@media (prefers-reduced-motion: reduce) {
+  .vanish-stripes {
+    animation: none;
+  }
+  .vanish-glitch-text {
+    animation: none;
+  }
+  .vanish-ring-pulse,
+  .vanish-ring-pulse-delayed {
+    animation: none;
+    opacity: 0;
+  }
+  .vanish-blink {
+    animation: none;
+  }
+}
+
+/* ==========================================
+   Pets Reaction Animations
+   Shared animations for all Pets stages (egg, baby, adult)
+   ========================================== */
+
+@keyframes pets-gentle-sway {
+  0%, 100% {
+    transform: rotate(-2deg);
+  }
+  50% {
+    transform: rotate(2deg);
+  }
+}
+
+@keyframes pets-bounce {
+  0%, 100% {
+    transform: translateY(0) rotate(0deg);
+  }
+  25% {
+    transform: translateY(-3px) rotate(1.5deg);
+  }
+  50% {
+    transform: translateY(0) rotate(0deg);
+  }
+  75% {
+    transform: translateY(-3px) rotate(-1.5deg);
+  }
+}
+
+.animate-pets-sway {
+  /* Baby/adult sway is livelier than egg (1.2s vs 1.8s) */
+  animation: pets-gentle-sway 1.2s ease-in-out infinite;
+}
+
+.animate-pets-bounce {
+  /* Baby/adult sing bounce - smoother and cuter than before (0.5s) */
+  animation: pets-bounce 0.5s ease-in-out infinite;
+}
+
+/* Direct interaction animations */
+@keyframes pets-hover-lean {
+  0%, 100% { transform: rotate(0deg) translateY(0); }
+  50% { transform: rotate(2.5deg) translateY(-2px); }
+}
+
+.animate-pets-hover-lean {
+  animation: pets-hover-lean 1s ease-in-out infinite;
+  transform-origin: center bottom;
+}
+
+@keyframes pets-poke-wiggle {
+  0%, 100% { transform: rotate(0deg) scale(1); }
+  15% { transform: rotate(-6deg) scale(1.03); }
+  30% { transform: rotate(5deg) scale(1.03); }
+  45% { transform: rotate(-4deg) scale(1.02); }
+  60% { transform: rotate(4deg) scale(1.02); }
+  75% { transform: rotate(-2deg) scale(1.01); }
+}
+
+.animate-pets-poke-wiggle {
+  animation: pets-poke-wiggle 0.55s ease-in-out 2;
+  transform-origin: center bottom;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-pets-sway,
+  .animate-pets-bounce,
+  .animate-pets-hover-lean,
+  .animate-pets-poke-wiggle {
+    animation: none !important;
+  }
+}
+
+/* ─── Floating Music Notes ───────────────────────────────────────────────────── */
+
+@keyframes float-up {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.8);
+  }
+  15% {
+    opacity: 1;
+    transform: translateY(-10px) scale(1);
+  }
+  85% {
+    opacity: 0.8;
+    transform: translateY(-60px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-80px) scale(0.6);
+  }
+}
+
+.animate-float-up {
+  animation: float-up 3s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-float-up {
+    animation: none !important;
+    opacity: 0 !important;
+  }
+}
+
+/* ─── Floating Social Hearts ─────────────────────────────────────────────────── */
+
+@keyframes social-heart-float {
+  0% {
+    opacity: 0;
+    transform: translateY(0) scale(0.6);
+  }
+  20% {
+    opacity: 0.85;
+    transform: translateY(-8px) scale(1);
+  }
+  80% {
+    opacity: 0.6;
+    transform: translateY(-50px) scale(0.9);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-65px) scale(0.5);
+  }
+}
+
+.animate-social-heart-float {
+  animation: social-heart-float 3.5s ease-out infinite;
+}
+
+/* ─── Interaction Reaction Animations ────────────────────────────────────────── */
+
+/* Happy wiggle — gentle sway triggered by feeding */
+@keyframes reaction-wiggle {
+  0%, 100% { transform: rotate(0deg); }
+  15% { transform: rotate(-4deg); }
+  30% { transform: rotate(4deg); }
+  45% { transform: rotate(-3deg); }
+  60% { transform: rotate(3deg); }
+  75% { transform: rotate(-1.5deg); }
+  90% { transform: rotate(1.5deg); }
+}
+
+.animate-reaction-wiggle {
+  animation: reaction-wiggle 0.8s ease-in-out;
+}
+
+/* Happy bounces — mini jumps triggered by playing */
+@keyframes reaction-bounce {
+  0%, 100% { transform: translateY(0); }
+  20% { transform: translateY(-8px); }
+  40% { transform: translateY(0); }
+  55% { transform: translateY(-5px); }
+  70% { transform: translateY(0); }
+  82% { transform: translateY(-2px); }
+  92% { transform: translateY(0); }
+}
+
+.animate-reaction-bounce {
+  animation: reaction-bounce 0.9s ease-in-out;
+}
+
+/* Sparkle pop — appears, scales, fades */
+@keyframes reaction-sparkle {
+  0% { opacity: 0; transform: scale(0.3); }
+  25% { opacity: 1; transform: scale(1.2); }
+  50% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(0.5); }
+}
+
+.animate-reaction-sparkle {
+  animation: reaction-sparkle 1.2s ease-out forwards;
+}
+
+/* Bubble rise — rises slightly, wobbles, stays visible (covering effect) */
+@keyframes reaction-bubble {
+  0% { opacity: 0; transform: translateY(0) scale(0.4); }
+  20% { opacity: 0.95; transform: translateY(-5px) scale(1); }
+  50% { opacity: 0.9; transform: translateY(-8px) scale(1.05); }
+  80% { opacity: 0.85; transform: translateY(-6px) scale(1); }
+  100% { opacity: 0.7; transform: translateY(-4px) scale(0.95); }
+}
+
+.animate-reaction-bubble {
+  animation: reaction-bubble 1.1s ease-out forwards;
+}
+
+/* Backdrop fade for bubble coverage */
+@keyframes reaction-bubble-backdrop {
+  0% { opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { opacity: 0.8; }
+}
+
+.animate-reaction-bubble-backdrop {
+  animation: reaction-bubble-backdrop 1.1s ease-out forwards;
+}
+
+/* ─── Crumb Burst (food-drag chewing feedback) ───────────────────────────────── */
+
+@keyframes crumb-fall {
+  0% {
+    opacity: 1;
+    transform: translate(0, 0) scale(1);
+  }
+  60% {
+    opacity: 0.7;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--crumb-dx), var(--crumb-dy)) scale(0.3);
+  }
+}
+
+.animate-crumb-fall {
+  animation: crumb-fall 1100ms ease-out forwards;
+}
+
+/* Floating reward word that drifts upward and fades out */
+@keyframes reward-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 0) scale(0.7);
+  }
+  15% {
+    opacity: 1;
+    transform: translate(-50%, -4px) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -28px) scale(0.9);
+  }
+}
+
+.animate-reward-pop {
+  animation: reward-pop 1100ms ease-out forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-social-heart-float,
+  .animate-reaction-wiggle,
+  .animate-reaction-bounce,
+  .animate-reaction-sparkle,
+  .animate-reaction-bubble,
+  .animate-reaction-bubble-backdrop,
+  .animate-crumb-fall,
+  .animate-reward-pop {
+    animation: none !important;
+    opacity: 0 !important;
+  }
+}
+
+/* ─── Pets Eye Animation ───────────────────────────────────────────────────── */
+
+/**
+ * Eye animation for Pets characters.
+ *
+ * Features:
+ * - Mouse tracking: eyes follow cursor instantly
+ * - Natural blinking: random intervals (2-5s), fast close, slow open
+ *
+ * NO CSS transitions - all animation is controlled by JavaScript RAF loop.
+ * Using transitions causes delayed visual updates.
+ *
+ * Transform combines: translate(x y) scale(1 blinkY)
+ * - translate: mouse tracking position
+ * - scale: vertical squash for blink effect (1 = open, 0.1 = closed)
+ */
+.pets-eye {
+  /* SVG transform properties - scale from center of each eye element */
+  transform-box: fill-box;
+  transform-origin: center center;
+  /* NO transition - instant updates only */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pets-eye {
+    /* Disable all eye animations for users who prefer reduced motion */
+    transform: none !important;
+  }
+}
+
+/* ─── NOSTR Pets + ₿AO Living SVG Animations ────────────────────────────────── */
+
+@keyframes pets-breathe {
+  0%, 100% { transform: scale(1) translateY(0); }
+  50% { transform: scale(1.02) translateY(-2px); }
+}
+
+@keyframes pets-bounce {
+  0%, 100% { transform: translateY(0); }
+  30% { transform: translateY(-18px) scale(1.03); }
+  60% { transform: translateY(4px) scale(0.98); }
+}
+
+@keyframes pets-tilt {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-6deg); }
+  75% { transform: rotate(4deg); }
+}
+
+@keyframes pets-pulse {
+  0%, 100% { transform: scale(1); filter: brightness(1); }
+  50% { transform: scale(1.05); filter: brightness(1.15); }
+}
+
+@keyframes pets-ripple {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04) skewX(2deg); }
+}
+
+@keyframes pets-glitch-shift {
+  0%, 100% { transform: translate(0); }
+  20% { transform: translate(-2px, 1px); }
+  40% { transform: translate(2px, -1px); }
+  60% { transform: translate(-1px, 2px); }
+}
+
+@keyframes pets-wing-flutter {
+  0%, 100% { transform: rotateY(0deg); }
+  50% { transform: rotateY(35deg); }
+}
+
+@keyframes pets-float-note {
+  0% { opacity: 0; transform: translateY(0) scale(0.6); }
+  30% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(-40px) scale(1); }
+}
+
+/* Generic idle/sleep body motion */
+.pets-state-idle .pets-adult-art,
+.pets-state-sleeping .pets-adult-art {
+  animation: pets-breathe 3.2s ease-in-out infinite;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+
+.pets-state-sleeping .pets-adult-art {
+  animation-duration: 4s;
+  filter: brightness(0.55) saturate(0.7);
+}
+
+/* Eye / note visibility */
+.eye-closed,
+.singing-notes {
+  display: none;
+}
+
+.pets-state-sleeping .eye-open {
+  display: none;
+}
+
+.pets-state-sleeping .eye-closed {
+  display: block;
+}
+
+.pets-state-singing .singing-notes {
+  display: block;
+}
+
+.pets-state-singing .singing-notes .note {
+  opacity: 0;
+  animation: pets-float-note 1.2s ease-out infinite;
+}
+
+.pets-state-singing .singing-notes .note:nth-child(2) {
+  animation-delay: 0.3s;
+}
+
+.pets-state-singing .singing-notes .note:nth-child(3) {
+  animation-delay: 0.6s;
+}
+
+/* Species-specific layer animations */
+.pets-form-glitchfox.pets-state-idle .glitch-stripes,
+.pets-form-glitchfox.pets-state-listening .glitch-stripes {
+  animation: pets-glitch-shift 0.25s steps(2) infinite;
+}
+
+.pets-form-glitchfox.pets-state-listening .glitch-stripes {
+  animation-duration: 0.18s;
+}
+
+.pets-form-biomechmoth.pets-state-idle .wing,
+.pets-form-biomechmoth.pets-state-singing .wing {
+  animation: pets-wing-flutter 0.18s ease-in-out infinite;
+}
+
+.pets-form-liquidblob.pets-state-idle .blob-body,
+.pets-form-liquidblob.pets-state-happy .blob-body {
+  animation: pets-ripple 2.4s ease-in-out infinite;
+}
+
+/* ₿AO variations: gentle market pulse on rarer tiers */
+[class*="pets-bao-"].pets-state-idle .pets-adult-art {
+  animation: pets-breathe 3.2s ease-in-out infinite;
+}
+
+[class*="pets-bao-"].pets-state-singing .pets-adult-art {
+  animation: pets-pulse 0.7s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pets-state-idle .pets-adult-art,
+  .pets-state-sleeping .pets-adult-art,
+  .pets-form-glitchfox.pets-state-idle .glitch-stripes,
+  .pets-form-glitchfox.pets-state-listening .glitch-stripes,
+  .pets-form-biomechmoth.pets-state-idle .wing,
+  .pets-form-biomechmoth.pets-state-singing .wing,
+  .pets-form-liquidblob.pets-state-idle .blob-body,
+  .pets-form-liquidblob.pets-state-happy .blob-body,
+  [class*="pets-bao-"].pets-state-idle .pets-adult-art,
+  [class*="pets-bao-"].pets-state-singing .pets-adult-art,
+  .pets-state-singing .singing-notes .note {
+    animation: none !important;
+  }
+}
+
+/* ── Milkdown Editor Styles ─────────────────────────────────────────────────── */
+
+.milkdown-editor .milkdown {
+  @apply outline-none;
+}
+
+.milkdown-editor .editor {
+  @apply outline-none min-h-[400px] p-3;
+  font-size: 1.125rem;
+  line-height: 1.75;
+}
+
+.milkdown-editor .ProseMirror {
+  @apply outline-none min-h-[400px];
+}
+
+.milkdown-editor .ProseMirror:focus {
+  @apply outline-none;
+}
+
+/* Headings */
+.milkdown-editor h1 {
+  @apply text-3xl font-bold mt-6 mb-4;
+}
+
+.milkdown-editor h2 {
+  @apply text-2xl font-semibold mt-5 mb-3;
+}
+
+.milkdown-editor h3 {
+  @apply text-xl font-semibold mt-4 mb-2;
+}
+
+.milkdown-editor h4 {
+  @apply text-lg font-medium mt-3 mb-2;
+}
+
+/* Inline styles */
+.milkdown-editor strong {
+  @apply font-bold;
+}
+
+.milkdown-editor em {
+  @apply italic;
+}
+
+.milkdown-editor del {
+  @apply line-through text-muted-foreground;
+}
+
+.milkdown-editor code {
+  @apply bg-muted px-1.5 py-0.5 rounded text-sm font-mono;
+}
+
+/* Block elements */
+.milkdown-editor p {
+  @apply my-1.5;
+}
+
+.milkdown-editor blockquote {
+  @apply border-l-4 border-primary/40 pl-4 my-4 italic text-muted-foreground;
+}
+
+.milkdown-editor pre {
+  @apply bg-muted rounded-lg p-4 my-4 overflow-x-auto;
+}
+
+.milkdown-editor pre code {
+  @apply bg-transparent p-0 font-mono;
+  font-size: 0.875rem;
+}
+
+/* Lists */
+.milkdown-editor ul {
+  @apply list-disc list-inside my-3 space-y-1;
+}
+
+.milkdown-editor ol {
+  @apply list-decimal list-inside my-3 space-y-1;
+}
+
+.milkdown-editor li {
+  @apply pl-1;
+}
+
+.milkdown-editor li p {
+  @apply inline my-0;
+}
+
+/* Task lists (GFM) */
+.milkdown-editor ul.task-list {
+  @apply list-none pl-0;
+}
+
+.milkdown-editor li.task-list-item {
+  @apply flex items-start gap-2 pl-0;
+}
+
+.milkdown-editor li.task-list-item input[type="checkbox"] {
+  @apply mt-1.5 h-4 w-4 rounded border-border;
+}
+
+/* Links */
+.milkdown-editor a {
+  @apply text-primary underline underline-offset-2 hover:text-primary/80 transition-colors;
+}
+
+/* Horizontal rule */
+.milkdown-editor hr {
+  @apply my-6 border-border;
+}
+
+/* Images */
+.milkdown-editor img {
+  @apply max-w-full h-auto rounded-lg my-4;
+}
+
+/* Tables (GFM) */
+.milkdown-editor table {
+  @apply w-full border-collapse my-4;
+}
+
+.milkdown-editor th,
+.milkdown-editor td {
+  @apply border border-border px-3 py-2 text-left;
+}
+
+.milkdown-editor th {
+  @apply bg-muted font-semibold;
+}
+
+.milkdown-editor tr:nth-child(even) {
+  @apply bg-muted/30;
+}
+
+
+
+/* Upload placeholder */
+.milkdown-upload-placeholder {
+  @apply inline-flex items-center gap-2 px-3 py-1.5 bg-muted/50 rounded-md text-sm text-muted-foreground;
+}
+
+.milkdown-upload-placeholder::before {
+  content: '';
+  @apply w-4 h-4 border-2 border-muted-foreground/30 border-t-primary rounded-full animate-spin;
+}
+
+/* Placeholder — only when unfocused AND content is empty. */
+.milkdown-editor .ProseMirror:not(:focus):not(.has-content) > p:first-child::before {
+  @apply text-muted-foreground pointer-events-none float-left h-0;
+  content: var(--ph, '');
+}
+
+/* Milkdown content area */
+.milkdown-editor .milkdown-content .ProseMirror {
+  @apply min-h-[350px];
+}
+
+/* Pets idle animations — speed/intensity driven by happiness via inline style */
+@keyframes pets-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+@keyframes pets-shadow-breathe {
+  0%, 100% { transform: translateX(-50%) scaleX(1); }
+  50% { transform: translateX(-50%) scaleX(0.92); }
+}
+
+@keyframes pets-sway {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(1.5deg); }
+  75% { transform: rotate(-1.5deg); }
+}
+
+/* 100,000-block birthday confetti shower */
+@keyframes pets-birthday-confetti {
+  0% {
+    opacity: 1;
+    transform: translateY(0) translateX(0) rotate(0deg);
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(180px) translateX(calc(var(--confetti-drift, 0) * 80px)) rotate(720deg);
+  }
+}
+
+/* Hatch ceremony shake animations */
+@keyframes pets-shake-light {
+  0%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-3deg); }
+  75% { transform: rotate(3deg); }
+}
+
+@keyframes pets-shake-medium {
+  0%, 100% { transform: rotate(0deg); }
+  20% { transform: rotate(-6deg); }
+  40% { transform: rotate(5deg); }
+  60% { transform: rotate(-4deg); }
+  80% { transform: rotate(6deg); }
+}
+
+@keyframes pets-shake-heavy {
+  0%, 100% { transform: rotate(0deg) scale(1); }
+  15% { transform: rotate(-8deg) scale(1.02); }
+  30% { transform: rotate(7deg) scale(0.98); }
+  45% { transform: rotate(-9deg) scale(1.03); }
+  60% { transform: rotate(8deg) scale(0.97); }
+  75% { transform: rotate(-7deg) scale(1.02); }
+  90% { transform: rotate(9deg) scale(1); }
+}
+
+@keyframes pets-flash {
+  0% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+@keyframes pets-fade-to-white {
+  0% { opacity: 0; }
+  100% { opacity: 1; }
+}
+
+/* ── Shared glow clock for synchronised low-status icons ────────────────
+   A single animation on the StatsCrown parent drives --stat-glow-intensity
+   (0→1→0).  Children inherit its animated value and compute their own
+   box-shadow via calc(), giving perfect phase-lock regardless of when
+   individual icons mount or re-enter a low-status state. */
+@property --stat-glow-intensity {
+  syntax: '<number>';
+  initial-value: 0;
+  inherits: true;
+}
+
+@keyframes stat-glow-clock {
+  0%, 8% { --stat-glow-intensity: 0; }
+  50% { --stat-glow-intensity: 1; }
+  92%, 100% { --stat-glow-intensity: 0; }
+}
+
+/* Legacy per-element keyframes — still used by the reusable StatIndicator
+   component (src/pets/ui/StatIndicator.tsx) outside the crown context. */
+@keyframes stat-glow {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 6px 2px currentColor; }
+}
+
+@keyframes stat-glow-critical {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 10px 3px currentColor; }
+}
+
+/* Guide-target glow — quick blink + pause for nav arrows & carousel.
+   Applied at 1.1s linear: rise (0→8%), brief peak (8→18%), fall (18→28%),
+   idle (28→100% ≈ 0.8 s pause). */
+@keyframes guide-glow-slow {
+  0%, 28%, 100% { box-shadow: 0 0 0 0 transparent; }
+  8%, 18% { box-shadow: 0 0 4px 1.5px currentColor; }
+}
+
+/* Guide-target glow — action-button rhythm, kept punchier (4 s cycle) */
+@keyframes guide-glow {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  50% { box-shadow: 0 0 8px 3px currentColor; }
+}
+
+/* Guide pulse — gentle scale throb for guided controls */
+@keyframes guide-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.08); }
+}
+
+/* Guide ring pulse — box-shadow glow for transform-positioned controls (no transform!) */
+@keyframes guide-ring-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 0 hsl(var(--primary) / 0);
+    filter: brightness(1);
+  }
+  50% {
+    box-shadow: 0 0 0 4px hsl(var(--primary) / 0.28), 0 0 14px hsl(var(--primary) / 0.45);
+    filter: brightness(1.12);
+  }
+}
+
+/* Room navigation arrow nudge — subtle horizontal pulse */
+@keyframes room-arrow-nudge-left {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(-3px); }
+}
+
+@keyframes room-arrow-nudge-right {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(3px); }
+}
+
+/* ── Overstimulation block overlay ─────────────────────────────────────────── */
+
+@keyframes overstim-vignette-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes overstim-vignette-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+@keyframes overstim-shockwave {
+  0%   { transform: scale(0.1); opacity: 1; }
+  60%  { opacity: 0.6; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+
+@keyframes vomit-fall {
+  0%   { transform: translate(-50%, -100%) translate(0, 0) scale(1); opacity: 1; }
+  100% { transform: translate(-50%, -100%) translate(var(--vomit-dx), var(--vomit-dy)) scale(1); opacity: 1; }
+}
+
+/* Override global scrollbar-hiding for elements that need a visible thin scrollbar */
+.scrollbar-thin {
+  scrollbar-width: thin;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  display: block;
+  height: 4px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.3);
+  border-radius: 9999px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ── Furniture editor hold progress ───────────────────────────────────────── */
+
+@keyframes furniture-hold-fill {
+  from { width: 0%; }
+  to   { width: 100%; }
+}
+
+/* ═════════════════════════════════════════════════════════════════════════════ *
+ * CYPHERPUNK NOSTR PETS — scoped theme layer
+ * Generated from Open Design artifact: cypherpunk-2140-pets
+ * ═════════════════════════════════════════════════════════════════════════════ */
+
+.pets-cyber {
+  /* Core canvas */
+  --cyber-bg:        oklch(18%  0.022 260);
+  --cyber-surface-1: oklch(24%  0.028 260);
+  --cyber-surface-2: oklch(30%  0.032 260);
+  --cyber-surface-3: oklch(36%  0.036 260);
+  --cyber-fg:        oklch(96%  0.008 260);
+  --cyber-muted:     oklch(70%  0.020 260);
+  --cyber-subtle:    oklch(52%  0.018 260);
+  --cyber-border:    oklch(34%  0.030 260);
+  --cyber-ring:      oklch(75%  0.18  210);
+
+  /* Neon accents */
+  --cyber-cyan:      oklch(78%  0.18  210);
+  --cyber-cyan-dim:  oklch(60%  0.14  210);
+  --cyber-magenta:   oklch(68%  0.22  340);
+  --cyber-magenta-dim: oklch(52% 0.16  340);
+  --cyber-green:     oklch(72%  0.18  145);
+  --cyber-green-dim: oklch(56%  0.14  145);
+  --cyber-amber:     oklch(76%  0.14  85);
+  --cyber-amber-dim: oklch(60%  0.10  85);
+  --cyber-red:       oklch(60%  0.20  25);
+  --cyber-red-dim:   oklch(46%  0.14  25);
+
+  /* Glows */
+  --glow-cyan:    0 0 8px oklch(78% 0.18 210 / 0.55), 0 0 24px oklch(78% 0.18 210 / 0.25);
+  --glow-magenta: 0 0 10px oklch(68% 0.22 340 / 0.55), 0 0 28px oklch(68% 0.22 340 / 0.25);
+  --glow-green:   0 0 8px oklch(72% 0.18 145 / 0.55), 0 0 24px oklch(72% 0.18 145 / 0.25);
+  --glow-amber:   0 0 8px oklch(76% 0.14 85 / 0.55), 0 0 24px oklch(76% 0.14 85 / 0.25);
+  --glow-red:     0 0 8px oklch(60% 0.20 25 / 0.55), 0 0 24px oklch(60% 0.20 25 / 0.25);
+
+  /* Typography (loaded via @font-face below, fallback to system) */
+  --font-display:  'Orbitron', 'Chakra Petch', 'Exo 2', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono:     'JetBrains Mono', 'IBM Plex Mono', 'Fira Code', ui-monospace, Menlo, monospace;
+}
+
+/* Display / monospace font faces */
+@font-face {
+  font-family: 'Orbitron';
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url('https://fonts.gstatic.com/s/orbitron/v31/yMJMMIlzdpvBhQQL_SC3X9yhF25-T1nyGy6xpmIyXjU1pgZ6.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F;
+}
+
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url('https://fonts.gstatic.com/s/jetbrainsmono/v18/tDbY2o-flEEny0FZhsfKu5WU4zr3E_BX0PnT8RD8yKxjPVmUsaaDhw.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F;
+}
+
+/* Scoped backgrounds for pet surfaces */
+.pets-cyber {
+  position: relative;
+  background: var(--cyber-bg);
+  color: var(--cyber-fg);
+}
+
+.pets-cyber .pets-cyber-surface {
+  background: var(--cyber-surface-1);
+  border-color: var(--cyber-border);
+  color: var(--cyber-fg);
+}
+
+/* Scanline overlay */
+.pets-cyber::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 50;
+  background: repeating-linear-gradient(
+    0deg,
+    oklch(0% 0 0 / 0) 0px,
+    oklch(0% 0 0 / 0) 2px,
+    oklch(0% 0 0 / 0.045) 2px,
+    oklch(0% 0 0 / 0.045) 4px
+  );
+  mix-blend-mode: overlay;
+  opacity: 0.55;
+}
+
+/* Cyber typography */
+.pets-cyber-display {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pets-cyber-mono {
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+}
+
+/* Cyber stat bars */
+.pets-cyber-bar-bg {
+  height: 10px;
+  border-radius: 9999px;
+  background: var(--cyber-surface-3);
+  border: 1px solid var(--cyber-border);
+  box-shadow: inset 0 1px 3px oklch(0% 0 0 / 0.35);
+  overflow: hidden;
+}
+
+.pets-cyber-bar-fill {
+  height: 100%;
+  width: var(--cyber-value, 0%);
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--cyber-fill-dim, var(--cyber-cyan-dim)), var(--cyber-fill, var(--cyber-cyan)));
+  box-shadow: 0 0 10px var(--cyber-fill, var(--cyber-cyan));
+  transition: width 0.6s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.pets-cyber-bar-fill-cyan     { --cyber-fill-dim: var(--cyber-cyan-dim);     --cyber-fill: var(--cyber-cyan); }
+.pets-cyber-bar-fill-magenta  { --cyber-fill-dim: var(--cyber-magenta-dim);  --cyber-fill: var(--cyber-magenta); }
+.pets-cyber-bar-fill-green    { --cyber-fill-dim: var(--cyber-green-dim);    --cyber-fill: var(--cyber-green); }
+.pets-cyber-bar-fill-amber    { --cyber-fill-dim: var(--cyber-amber-dim);    --cyber-fill: var(--cyber-amber); }
+.pets-cyber-bar-fill-red      { --cyber-fill-dim: var(--cyber-red-dim);      --cyber-fill: var(--cyber-red); }
+
+.pets-cyber-bar-fill::after {
+  content: '';
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, transparent, oklch(100% 0 0 / 0.35), transparent);
+  animation: cyber-scan-shimmer 2.2s linear infinite;
+  background-size: 200% 100%;
+}
+
+/* Cyber button variants */
+.pets-cyber-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.625rem 1.25rem;
+  border: 1px solid transparent;
+  border-radius: calc(var(--radius) - 2px);
+  font-family: var(--font-display);
+  font-size: 0.8125rem;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  transition: transform 0.12s ease, box-shadow 0.18s ease, border-color 0.18s ease, background-color 0.18s ease;
+}
+
+.pets-cyber-btn:active { transform: translateY(1px); }
+
+.pets-cyber-btn-cyan {
+  background: var(--cyber-cyan-dim);
+  color: oklch(12% 0.05 260);
+  border-color: var(--cyber-cyan);
+  box-shadow: var(--glow-cyan);
+}
+.pets-cyber-btn-cyan:hover { background: var(--cyber-cyan); }
+
+.pets-cyber-btn-magenta {
+  background: var(--cyber-magenta-dim);
+  color: oklch(98% 0.01 340);
+  border-color: var(--cyber-magenta);
+  box-shadow: var(--glow-magenta);
+}
+.pets-cyber-btn-magenta:hover { background: var(--cyber-magenta); }
+
+.pets-cyber-btn-green {
+  background: var(--cyber-green-dim);
+  color: oklch(12% 0.05 145);
+  border-color: var(--cyber-green);
+  box-shadow: var(--glow-green);
+}
+.pets-cyber-btn-green:hover { background: var(--cyber-green); }
+
+.pets-cyber-btn-amber {
+  background: var(--cyber-amber-dim);
+  color: oklch(12% 0.05 85);
+  border-color: var(--cyber-amber);
+  box-shadow: var(--glow-amber);
+}
+.pets-cyber-btn-amber:hover { background: var(--cyber-amber); }
+
+.pets-cyber-btn-red {
+  background: var(--cyber-red-dim);
+  color: oklch(98% 0.01 25);
+  border-color: var(--cyber-red);
+  box-shadow: var(--glow-red);
+}
+.pets-cyber-btn-red:hover { background: var(--cyber-red); }
+
+.pets-cyber-btn-ghost {
+  background: transparent;
+  color: var(--cyber-fg);
+  border-color: var(--cyber-border);
+}
+.pets-cyber-btn-ghost:hover {
+  border-color: var(--cyber-cyan);
+  color: var(--cyber-cyan);
+  box-shadow: var(--glow-cyan);
+}
+
+/* Cyber badges */
+.pets-cyber-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.25rem 0.5rem;
+  border-radius: 9999px;
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  border: 1px solid currentColor;
+}
+
+.pets-cyber-badge-cyan  { color: var(--cyber-cyan);  background: oklch(78% 0.18 210 / 0.12); }
+.pets-cyber-badge-magenta { color: var(--cyber-magenta); background: oklch(68% 0.22 340 / 0.12); }
+.pets-cyber-badge-green { color: var(--cyber-green); background: oklch(72% 0.18 145 / 0.12); }
+.pets-cyber-badge-amber { color: var(--cyber-amber); background: oklch(76% 0.14 85 / 0.12); }
+.pets-cyber-badge-red   { color: var(--cyber-red);   background: oklch(60% 0.20 25 / 0.12); }
+
+/* Cyber keyframes */
+@keyframes cyber-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-8px); }
+}
+
+@keyframes cyber-breathe {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.03); opacity: 0.92; }
+}
+
+@keyframes cyber-pulse-glow {
+  0%, 100% { filter: drop-shadow(0 0 6px currentColor); }
+  50% { filter: drop-shadow(0 0 18px currentColor); }
+}
+
+@keyframes cyber-glitch-flicker {
+  0%, 90%, 100% { opacity: 1; transform: translate(0); }
+  91% { opacity: 0.7; transform: translate(-2px, 1px); }
+  93% { opacity: 0.85; transform: translate(2px, -1px); }
+  95% { opacity: 0.6; transform: translate(-1px, 2px); }
+  97% { opacity: 1; transform: translate(1px, -2px); }
+}
+
+@keyframes cyber-scan-shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes cyber-hatch-shake {
+  0%, 100% { transform: translate(0, 0) rotate(0); }
+  10% { transform: translate(-2px, 1px) rotate(-1deg); }
+  20% { transform: translate(2px, -1px) rotate(1deg); }
+  30% { transform: translate(-3px, 2px) rotate(-2deg); }
+  40% { transform: translate(3px, -2px) rotate(2deg); }
+  50% { transform: translate(-1px, 1px) rotate(-1deg); }
+  60% { transform: translate(1px, -1px) rotate(1deg); }
+  70%, 90% { transform: translate(0, 0) rotate(0); }
+}
+
+@keyframes cyber-evolve-flash {
+  0%, 100% { opacity: 0; }
+  25%, 75% { opacity: 0.35; }
+  50% { opacity: 0.7; }
+}
+
+@keyframes cyber-ring-spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.pets-cyber-anim-float { animation: cyber-float 4s ease-in-out infinite; }
+.pets-cyber-anim-breathe { animation: cyber-breathe 3.2s ease-in-out infinite; }
+.pets-cyber-anim-pulse { animation: cyber-pulse-glow 2.2s ease-in-out infinite; }
+.pets-cyber-anim-glitch { animation: cyber-glitch-flicker 3.5s infinite; }
+.pets-cyber-anim-shake { animation: cyber-hatch-shake 0.8s ease-in-out infinite; }
+.pets-cyber-anim-spin { animation: cyber-ring-spin 24s linear infinite; }
+
+/* Ceremony overlay */
+.pets-cyber-ceremony {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1.25rem;
+  background: oklch(18% 0.022 260 / 0.92);
+  backdrop-filter: blur(10px);
+  z-index: 50;
+}
+
+.pets-cyber-ceremony-title {
+  font-family: var(--font-display);
+  font-size: clamp(1.25rem, 3vw, 1.75rem);
+  text-transform: uppercase;
+  color: var(--cyber-fg);
+}
+
+.pets-cyber-ceremony-sub {
+  font-family: var(--font-mono);
+  color: var(--cyber-cyan);
+  text-shadow: var(--glow-cyan);
+}
+
+.pets-cyber-glitch-flash {
+  position: absolute;
+  inset: 0;
+  background: var(--cyber-cyan);
+  opacity: 0;
+  pointer-events: none;
+  animation: cyber-evolve-flash 1.2s ease-in-out infinite;
+}
+
+
+/* ── Pets room action buttons under cyber theme ───────────────────────────── */
+.pets-cyber .pets-room-action {
+  background: var(--cyber-surface-2) !important;
+  border-color: var(--cyber-border) !important;
+  color: var(--cyber-fg) !important;
+  box-shadow: 0 0 8px oklch(78% 0.18 210 / 0.25), inset 0 1px 0 oklch(100% 0 0 / 0.08) !important;
+  background-image: none !important;
+}
+
+.pets-cyber .pets-room-action:hover {
+  border-color: var(--cyber-cyan) !important;
+  box-shadow: var(--glow-cyan), inset 0 1px 0 oklch(100% 0 0 / 0.08) !important;
+}
+
+.pets-cyber .pets-room-action svg {
+  color: var(--cyber-cyan) !important;
+  filter: drop-shadow(0 0 4px var(--cyber-cyan));
+}
+
+/* ── Pets room status HUD under cyber theme ────────────────────────────────── */
+.pets-cyber [class*="rounded-full flex items-center justify-center"][class*="border"] {
+  background: var(--cyber-surface-2) !important;
+  border-color: var(--cyber-border) !important;
+}
+
+.pets-cyber svg circle[stroke] {
+  filter: drop-shadow(0 0 2px currentColor);
+}
+
+/* ── Pets room name label under cyber theme ────────────────────────────────── */
+.pets-cyber [class*="whitespace-nowrap"] {
+  font-family: var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  text-shadow: 0 0 8px currentColor;
+}
+
+/* ── Room editor / drawer surfaces under cyber theme ───────────────────────── */
+.pets-cyber .bg-background\/90 {
+  background: oklch(24% 0.028 260 / 0.95) !important;
+  border-bottom: 1px solid var(--cyber-border);
+}
+
+.pets-cyber .bg-background {
+  background: var(--cyber-bg) !important;
+}
+
+.pets-cyber .text-foreground {
+  color: var(--cyber-fg) !important;
+}
+
+.pets-cyber .text-muted-foreground {
+  color: var(--cyber-muted) !important;
+}
+
+.pets-cyber .border-border {
+  border-color: var(--cyber-border) !important;
+}
+
+/* ── SubHeaderBar under cyber theme ────────────────────────────────────────── */
+.pets-cyber [class*="SubHeaderBar"] {
+  background: oklch(24% 0.028 260 / 0.9) !important;
+  border-bottom: 1px solid var(--cyber-border);
+}
+
+/* ── Kill the native video placeholder/play-circle ────────────────────────────
+   Android WebView (Chromium) and iOS WKWebView paint a large stretched gray
+   play-circle over any poster-less <video> while it loads, drawn by the media
+   controls shadow DOM. We render our own posters and play buttons, so suppress
+   every flavour of the built-in overlay. Scoped to the app's custom players via
+   data-no-native-poster so we never break <video controls> elsewhere. */
+video[data-no-native-poster] {
+  background-color: transparent;
+}
+video[data-no-native-poster]::-webkit-media-controls,
+video[data-no-native-poster]::-webkit-media-controls-overlay-play-button,
+video[data-no-native-poster]::-webkit-media-controls-overlay-enclosure,
+video[data-no-native-poster]::-webkit-media-controls-start-playback-button,
+video[data-no-native-poster]::-internal-media-controls-overlay-cast-button {
+  display: none !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+  opacity: 0 !important;
+}

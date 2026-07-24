@@ -1,0 +1,30 @@
+{
+  "name": "pets-battle-escrow-operator",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@cashu/cashu-ts": "^2.9.0",
+    "@noble/curves": "^2.2.0",
+    "express": "^4.21.2",
+    "nostr-tools": "^2.13.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^22.5.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.5.3",
+    "vitest": "^4.1.8"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

@@ -1,0 +1,212 @@
+import { Link } from 'react-router-dom';
+import { GripVertical, X } from 'lucide-react';
+import {
+  DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors,
+  type DragEndEvent,
+} from '@dnd-kit/core';
+import {
+  SortableContext, verticalListSortingStrategy, useSortable, arrayMove,
+} from '@dnd-kit/sortable';
+import { CSS } from '@dnd-kit/utilities';
+import { sidebarItemIcon, itemLabel, itemPath, isSidebarDivider } from '@/lib/sidebarItems';
+import { cn } from '@/lib/utils';
+import { useCallback } from 'react';
+
+// ── Sortable item ─────────────────────────────────────────────────────────────
+
+export interface SidebarNavItemProps {
+  id: string;
+  active: boolean;
+  editing: boolean;
+  onRemove: (id: string, index?: number) => void;
+  onClick?: (e: React.MouseEvent) => void;
+  showIndicator?: boolean;
+  /** Extra classes on the link. Defaults to 'text-lg' for desktop. */
+  linkClassName?: string;
+  /** When true, render as an icon-only item for a collapsed sidebar. */
+  compact?: boolean;
+  /** Minimal row style used by the redesigned main menu. */
+  minimal?: boolean;
+}
+
+export function SidebarNavItem({
+  id, active, editing, onRemove, onClick, showIndicator, linkClassName, compact, minimal,
+}: SidebarNavItemProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled: !editing });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+  const icon = sidebarItemIcon(id, compact ? 'size-5' : minimal ? 'size-5' : 'size-6');
+  const label = itemLabel(id);
+  const path = itemPath(id);
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        'flex items-center transition-colors relative',
+        minimal ? 'bg-transparent' : 'rounded-full bg-background/85',
+        isDragging && 'z-10 opacity-80 shadow-lg',
+      )}
+    >
+      {editing && (
+        <button
+          className="flex items-center justify-center w-8 shrink-0 cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground transition-colors"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="size-4" />
+        </button>
+      )}
+
+      <Link
+        to={path}
+        onClick={onClick}
+        className={cn(
+          'flex items-center transition-colors min-w-0',
+          minimal
+            ? 'gap-4 py-3 px-3 text-base text-foreground hover:text-[var(--2140-bitcoin)] flex-1'
+            : 'rounded-full hover:bg-secondary/60',
+          compact ? 'justify-center py-2.5 px-2' : minimal ? '' : 'gap-4 py-3 flex-1',
+          editing ? 'px-2' : compact ? 'px-2' : minimal ? '' : 'px-3',
+          active ? (minimal ? 'text-[var(--2140-bitcoin)] font-semibold' : 'font-bold text-primary') : (minimal ? '' : 'font-normal text-foreground'),
+          linkClassName ?? 'text-lg',
+        )}
+      >
+        <span className={cn('shrink-0 relative', compact && 'flex items-center justify-center')}>
+          {icon}
+          {showIndicator && (
+            <span className="absolute -top-1 right-0 size-2.5 bg-primary rounded-full" />
+          )}
+        </span>
+        {!compact && (
+          <span className="truncate" style={{ fontFamily: 'var(--title-font-family, inherit)' }}>{label}</span>
+        )}
+      </Link>
+
+      {editing && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onRemove(id); }}
+          className="flex items-center justify-center size-8 shrink-0 rounded-full transition-all text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+          title={`Remove ${label}`}
+        >
+          <X className="size-4" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── Divider item ──────────────────────────────────────────────────────────────
+
+interface SidebarDividerItemProps {
+  sortableId: string;
+  editing: boolean;
+  onRemove: () => void;
+}
+
+function SidebarDividerItem({ sortableId, editing, onRemove }: SidebarDividerItemProps) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: sortableId, disabled: !editing });
+  const style = { transform: CSS.Transform.toString(transform), transition };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn('flex items-center rounded-full transition-colors relative', editing && 'bg-background/85', isDragging && 'z-10 opacity-80 shadow-lg')}
+    >
+      {editing && (
+        <button
+          className="flex items-center justify-center w-8 shrink-0 cursor-grab active:cursor-grabbing text-muted-foreground hover:text-foreground transition-colors"
+          {...attributes}
+          {...listeners}
+        >
+          <GripVertical className="size-4" />
+        </button>
+      )}
+      <div className={cn('flex-1 flex items-center py-3', editing ? 'px-2' : 'px-3')}>
+        <div className="h-px w-full bg-border" />
+      </div>
+      {editing && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onRemove(); }}
+          className="flex items-center justify-center size-8 shrink-0 rounded-full transition-all text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+          title="Remove divider"
+        >
+          <X className="size-4" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ── DnD-aware nav list ────────────────────────────────────────────────────────
+
+export interface SidebarNavListProps {
+  items: string[];
+  editing: boolean;
+  onRemove: (id: string, index?: number) => void;
+  onReorder: (newOrder: string[]) => void;
+  isActive: (id: string) => boolean;
+  getOnClick?: (id: string) => ((e: React.MouseEvent) => void) | undefined;
+  getShowIndicator?: (id: string) => boolean | undefined;
+  linkClassName?: string;
+  /** When true, render items icon-only for a collapsed sidebar. */
+  compact?: boolean;
+  /** Minimal row style used by the redesigned main menu. */
+  minimal?: boolean;
+}
+
+export function SidebarNavList({
+  items, editing, onRemove, onReorder, isActive, getOnClick, getShowIndicator, linkClassName, compact, minimal,
+}: SidebarNavListProps) {
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor),
+  );
+
+  // Assign unique sortable IDs: regular items use their id, dividers get "divider-{index}"
+  const sortableIds = items.map((id, i) => isSidebarDivider(id) ? `divider-${i}` : id);
+
+  const handleDragEnd = useCallback((event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const oldIndex = sortableIds.indexOf(active.id as string);
+    const newIndex = sortableIds.indexOf(over.id as string);
+    if (oldIndex === -1 || newIndex === -1) return;
+    onReorder(arrayMove(items, oldIndex, newIndex));
+  }, [sortableIds, items, onReorder]);
+
+  return (
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={sortableIds} strategy={verticalListSortingStrategy}>
+        {items.map((id, i) => {
+          const sortableId = sortableIds[i];
+          if (isSidebarDivider(id)) {
+            return (
+              <SidebarDividerItem
+                key={sortableId}
+                sortableId={sortableId}
+                editing={editing}
+                onRemove={() => onRemove(id, i)}
+              />
+            );
+          }
+          return (
+            <SidebarNavItem
+              key={id}
+              id={id}
+              active={isActive(id)}
+              editing={editing}
+              onRemove={(removeId) => onRemove(removeId, i)}
+              onClick={getOnClick?.(id)}
+              showIndicator={getShowIndicator?.(id)}
+              linkClassName={linkClassName}
+              compact={compact}
+              minimal={minimal}
+            />
+          );
+        })}
+      </SortableContext>
+    </DndContext>
+  );
+}

@@ -1,0 +1,469 @@
+// src/pets/actions/hooks/usePetsStageTransition.ts
+
+/**
+ * Hooks for Pets stage transitions (hatch, evolve).
+ * 
+ * Both transitions follow the same decay pattern:
+ * 1. Apply accumulated decay from `last_decay_at` to `now`
+ * 2. Use decayed stats as the source of truth for the transition
+ * 3. Publish new event with decayed stats + new stage
+ * 4. Reset `last_decay_at` to current timestamp
+ * 
+ * @see docs/pets/decay-system.md
+ */
+
+import { useMutation } from '@tanstack/react-query';
+import type { NostrEvent } from '@nostrify/nostrify';
+
+import { useCurrentUser } from '@/hooks/useCurrentUser';
+import { useAppContext } from '@/hooks/useAppContext';
+import { usePetsNostrPublish } from '@/pets/core/hooks/usePetsNostrPublish';
+import { toast } from '@/hooks/useToast';
+
+import type { PetsCompanion, NostrPetProfile, PetsStage } from '@/pets/core/lib/pets';
+import {
+  KIND_PETS_STATE,
+  STAT_MAX,
+  updatePetsTags,
+} from '@/pets/core/lib/pets';
+import { applyPetsDecayForCompanion } from '@/pets/core/lib/pets-decay';
+import { useCurrentBlockHeight, isPetOldEnough, getStoredBirthBlockHeight } from '@/pets/core/lib/pets-life';
+import { validateAndRepairPetsTags } from '@/pets/core/lib/pets-tag-schema';
+import { serializeEvolutionContent } from '@/pets/core/lib/missions';
+import { createEvolveMissions } from '../lib/evolution-missions';
+import {
+  EVOLVE_MISSIONS,
+  EVOLVE_STAT_THRESHOLD,
+  findEvolutionMission,
+  evolutionMatchesDefinitions,
+  migrateEvolutionMissions,
+} from '../lib/evolution-missions';
+import { missionProgress } from '@/pets/core/lib/missions';
+import {
+  readEvolutionFromStorage,
+  writeEvolutionToStorage,
+  clearEvolutionFromStorage,
+} from '../lib/daily-mission-tracker';
+import { getStreakTagUpdates } from '../lib/pets-streak';
+
+// ─── Content Helpers ──────────────────────────────────────────────────────────
+
+/**
+ * Generate the content string for a Pets at a given stage.
+ * Now stores JSON with an optional evolution array.
+ * Falls back to a descriptive JSON content when no evolution is active.
+ */
+function generatePetsContent(_name: string, _stage: PetsStage): string {
+  // Return empty JSON — evolution will be populated separately when needed.
+  // The old plain-text format ("Luna is an egg Pets.") is no longer used.
+  return JSON.stringify({});
+}
+
+// ─── Types ────────────────────────────────────────────────────────────────────
+
+/**
+ * Result of ensuring canonical companion before action.
+ * This is the same interface used by usePetsUseInventoryItem.
+ */
+export interface CanonicalActionResult {
+  companion: PetsCompanion;
+  content: string;
+  allTags: string[][];
+  wasMigrated: boolean;
+  /** Latest profile tags after migration */
+  profileAllTags: string[][];
+  /** Latest profile storage after migration */
+  profileStorage: import('@/pets/core/lib/pets').StorageItem[];
+}
+
+/**
+ * Parameters for stage transition hooks.
+ */
+export interface UsePetsStageTransitionParams {
+  companion: PetsCompanion | null;
+  profile: NostrPetProfile | null;
+  /** Called to ensure companion is canonical (from migration helper) */
+  ensureCanonicalBeforeAction: () => Promise<CanonicalActionResult | null>;
+  /** Update companion event in local cache */
+  updateCompanionEvent: (event: NostrEvent) => void;
+  /** When true, BTC-stage transitions are enabled. Defaults to true for backwards compatibility. */
+  isCashuPetsWallet?: boolean;
+}
+
+/**
+ * Result of a stage transition.
+ */
+export interface StageTransitionResult {
+  /** Previous stage before transition */
+  previousStage: PetsStage;
+  /** New stage after transition */
+  newStage: PetsStage;
+  /** The Pets's name */
+  name: string;
+  /** Stats after decay was applied (before any transition bonuses) */
+  decayedStats: {
+    hunger: number;
+    happiness: number;
+    health: number;
+    hygiene: number;
+    energy: number;
+  };
+}
+
+// ─── Hatch Hook ───────────────────────────────────────────────────────────────
+
+/**
+ * Hook to hatch an egg into a baby Pets.
+ * 
+ * Transition: egg -> baby
+ * 
+ * Requirements:
+ * - Pets must be in egg stage
+ * - Applies accumulated decay before transition
+ * - Resets stats to healthy baby defaults (inherits health from egg)
+ * - Sets last_decay_at to current timestamp
+ */
+export function usePetsHatch({
+  companion,
+  profile,
+  ensureCanonicalBeforeAction,
+  updateCompanionEvent,
+  isCashuPetsWallet: _isCashuPetsWallet = true,
+}: UsePetsStageTransitionParams) {
+  const { user } = useCurrentUser();
+  const { mutateAsync: publishEvent } = usePetsNostrPublish();
+  const { config } = useAppContext();
+  const currentBlockHeight = useCurrentBlockHeight(config.esploraApis);
+
+  return useMutation({
+    mutationFn: async (): Promise<StageTransitionResult> => {
+      // ─── Validation ───
+      if (!user?.pubkey) {
+        throw new Error('You must be logged in to hatch');
+      }
+
+      if (!companion) {
+        throw new Error('No companion selected');
+      }
+
+      if (!profile) {
+        throw new Error('Profile not found');
+      }
+
+      // ─── Ensure Canonical Before Action ───
+      const canonical = await ensureCanonicalBeforeAction();
+      if (!canonical) {
+        throw new Error('Failed to prepare companion for hatching');
+      }
+
+      // Validate stage using the freshly fetched canonical companion, not the
+      // stale prop, so a concurrent hatch on another client is not republished.
+      if (canonical.companion.stage !== 'egg') {
+        throw new Error('Only eggs can be hatched');
+      }
+
+      // Eggs must wait for at least one real Bitcoin block before hatching.
+      // Prefer the stored birth_block tag; fall back to the 10-minute estimate
+      // for legacy eggs.
+      const storedBirthBlock = getStoredBirthBlockHeight(canonical.companion.event.tags);
+      if (!isPetOldEnough(canonical.companion.event.created_at, currentBlockHeight, storedBirthBlock)) {
+        throw new Error('This egg is still warming. Wait until at least one Bitcoin block is mined before hatching.');
+      }
+
+      // ─── Apply Accumulated Decay First ───
+      // Per decay-system.md: Always apply accumulated decay from persisted state
+      // before any stage transition.
+      const now = Math.floor(Date.now() / 1000);
+      const decayResult = applyPetsDecayForCompanion(canonical.companion, now);
+
+      // ─── Calculate Baby Stats ───
+      // All stats reset to 100 when hatching — the baby starts fresh
+      const babyStats = {
+        hunger: STAT_MAX,
+        happiness: STAT_MAX,
+        health: STAT_MAX,
+        hygiene: STAT_MAX,
+        energy: STAT_MAX,
+      };
+
+      // ─── Build Updated Tags ───
+      // CRITICAL: Start from canonical.allTags and only remove task/state-specific tags
+      // This preserves ALL identity attributes (personality, trait, favorite_food, etc.)
+      const nowStr = now.toString();
+      
+      // Build the updated tags using the central merge function
+      // Get streak updates (hatching counts as care activity!)
+      const streakUpdates = getStreakTagUpdates(canonical.companion) ?? {};
+      
+      const mergedTags = updatePetsTags(canonical.allTags, {
+        stage: 'baby',
+        state: 'active', // Newly hatched babies are awake
+        hunger: babyStats.hunger.toString(),
+        happiness: babyStats.happiness.toString(),
+        health: babyStats.health.toString(),
+        hygiene: babyStats.hygiene.toString(),
+        energy: babyStats.energy.toString(),
+        ...streakUpdates,
+        last_interaction: nowStr,
+        last_decay_at: nowStr,
+      });
+      
+      // ─── Validate and Repair Tags ───
+      // Use the tag integrity guard to ensure all persistent tags are preserved
+      // and task-related tags are properly cleaned up for stage transitions
+      const repairResult = validateAndRepairPetsTags(
+        mergedTags,
+        canonical.allTags,
+        { cleanupTaskTags: true }
+      );
+      
+      if (repairResult.errors.length > 0) {
+        console.error('[Hatch] Tag validation errors:', repairResult.errors);
+        throw new Error(`Tag validation failed: ${repairResult.errors.join(', ')}`);
+      }
+      
+      if (repairResult.repaired && import.meta.env.DEV) {
+        console.log('[Hatch] Tag repairs applied:', repairResult.repairs);
+      }
+      
+      // ─── Auto-start evolution for newly hatched babies ───
+      // Applied AFTER tag validation because cleanupTaskTags clears
+      // progression tags. We set the new progression_state here so the
+      // baby starts its evolution journey immediately.
+      const newTags = updatePetsTags(repairResult.tags, {
+        progression_state: 'evolving',
+        progression_started_at: nowStr,
+      });
+
+      // ─── Write evolution missions into 31124 content ───
+      // Baby auto-starts evolution, so seed the missions immediately.
+      const evolveMissions = createEvolveMissions();
+      const newContent = serializeEvolutionContent(
+        generatePetsContent(canonical.companion.name, 'baby'),
+        evolveMissions,
+      );
+
+      // ─── Publish Event ───
+      const event = await publishEvent({
+        kind: KIND_PETS_STATE,
+        content: newContent,
+        tags: newTags,
+        prev: canonical.companion.event,
+      });
+
+      updateCompanionEvent(event);
+
+      // ─── Seed evolution session store for immediate tally tracking ───
+      if (user?.pubkey) {
+        writeEvolutionToStorage(evolveMissions, user.pubkey, canonical.companion.d);
+        window.dispatchEvent(new CustomEvent('daily-missions-updated', { detail: { evolution: true, d: canonical.companion.d } }));
+      }
+
+      return {
+        previousStage: 'egg',
+        newStage: 'baby',
+        name: canonical.companion.name,
+        decayedStats: decayResult.stats,
+      };
+    },
+    onSuccess: ({ name }) => {
+      toast({
+        title: 'Your egg hatched!',
+        description: `${name} is now a baby NOSTR PET! Take good care of them.`,
+      });
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Failed to hatch',
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
+}
+
+// ─── Evolve Hook ──────────────────────────────────────────────────────────────
+
+/**
+ * Hook to evolve a baby Pets into an adult.
+ * 
+ * Transition: baby -> adult
+ * 
+ * Requirements:
+ * - Pets must be in baby stage
+ * - Applies accumulated decay before transition
+ * - Preserves all stats (decay already applied)
+ * - Sets last_decay_at to current timestamp
+ */
+export function usePetsEvolve({
+  companion,
+  profile,
+  ensureCanonicalBeforeAction,
+  updateCompanionEvent,
+  isCashuPetsWallet = true,
+}: UsePetsStageTransitionParams) {
+  const { user } = useCurrentUser();
+  const { mutateAsync: publishEvent } = usePetsNostrPublish();
+
+  return useMutation({
+    mutationFn: async (): Promise<StageTransitionResult> => {
+      // ─── Validation ───
+      if (!user?.pubkey) {
+        throw new Error('You must be logged in to evolve');
+      }
+
+      if (!companion) {
+        throw new Error('No companion selected');
+      }
+
+      if (!profile) {
+        throw new Error('Profile not found');
+      }
+
+      if (!isCashuPetsWallet) {
+        throw new Error('₿AO signet pets cannot reach the adult stage. Switch to real Cashu sats mode to evolve your NOSTR PET.');
+      }
+
+      // ─── Ensure Canonical Before Action ───
+      const canonical = await ensureCanonicalBeforeAction();
+      if (!canonical) {
+        throw new Error('Failed to prepare companion for evolution');
+      }
+
+      // Validate stage using the freshly fetched canonical companion, not the
+      // stale prop, so a concurrent evolution on another client is not republished.
+      if (canonical.companion.stage !== 'baby') {
+        if (canonical.companion.stage === 'egg') {
+          throw new Error('Eggs must hatch before they can evolve into a NOSTR PET');
+        }
+        if (canonical.companion.stage === 'adult') {
+          throw new Error('This NOSTR PET is already fully evolved');
+        }
+        throw new Error('Only baby NOSTR PETS can evolve');
+      }
+
+      // ─── Apply Accumulated Decay First ───
+      // Per decay-system.md: Always apply accumulated decay from persisted state
+      // before any stage transition.
+      const now = Math.floor(Date.now() / 1000);
+      const decayResult = applyPetsDecayForCompanion(canonical.companion, now);
+
+      // ─── Enforce evolution task completion ───
+      // The domain hook is the authoritative gate: both persistent missions and
+      // the dynamic stat task must be complete before a baby can evolve.
+      const evolution = (() => {
+        const fromStore = readEvolutionFromStorage(user?.pubkey, canonical.companion.d);
+        let current = fromStore ?? canonical.companion.evolution ?? [];
+        if (current.length === 0) {
+          current = createEvolveMissions();
+        } else if (!evolutionMatchesDefinitions(current, EVOLVE_MISSIONS)) {
+          current = migrateEvolutionMissions(current, EVOLVE_MISSIONS);
+        }
+        return current;
+      })();
+
+      const persistentTasksComplete = EVOLVE_MISSIONS.every((def) => {
+        const mission = findEvolutionMission(evolution, def.id);
+        const progress = mission ? missionProgress(mission) : 0;
+        return progress >= def.target;
+      });
+
+      const statsAfterDecay = decayResult.stats;
+      const dynamicTaskComplete =
+        statsAfterDecay.hunger >= EVOLVE_STAT_THRESHOLD &&
+        statsAfterDecay.happiness >= EVOLVE_STAT_THRESHOLD &&
+        statsAfterDecay.health >= EVOLVE_STAT_THRESHOLD &&
+        statsAfterDecay.hygiene >= EVOLVE_STAT_THRESHOLD &&
+        statsAfterDecay.energy >= EVOLVE_STAT_THRESHOLD;
+
+      if (!persistentTasksComplete || !dynamicTaskComplete) {
+        throw new Error('Evolution tasks are not complete yet. Keep caring for your NOSTR PET!');
+      }
+
+      // ─── Adult Stats ───
+      // Adult inherits all decayed stats from baby
+      // No stat reset - evolution preserves current condition
+      const adultStats = decayResult.stats;
+
+      // ─── Build Updated Tags ───
+      // CRITICAL: Start from canonical.allTags and only remove task/state-specific tags
+      // This preserves ALL identity attributes (personality, trait, favorite_food, etc.)
+      const nowStr = now.toString();
+      
+      // Get streak updates (evolving counts as care activity!)
+      const streakUpdates = getStreakTagUpdates(canonical.companion) ?? {};
+      
+      // Build the updated tags using the central merge function
+      const mergedTags = updatePetsTags(canonical.allTags, {
+        stage: 'adult',
+        state: 'active', // Evolution completes with active state
+        hunger: adultStats.hunger.toString(),
+        happiness: adultStats.happiness.toString(),
+        health: adultStats.health.toString(),
+        hygiene: adultStats.hygiene.toString(),
+        energy: adultStats.energy.toString(),
+        ...streakUpdates,
+        last_interaction: nowStr,
+        last_decay_at: nowStr,
+      });
+      
+      // ─── Validate and Repair Tags ───
+      // Use the tag integrity guard to ensure all persistent tags are preserved
+      // and task-related tags are properly cleaned up for stage transitions
+      const repairResult = validateAndRepairPetsTags(
+        mergedTags,
+        canonical.allTags,
+        { cleanupTaskTags: true }
+      );
+      
+      if (repairResult.errors.length > 0) {
+        console.error('[Evolve] Tag validation errors:', repairResult.errors);
+        throw new Error(`Tag validation failed: ${repairResult.errors.join(', ')}`);
+      }
+      
+      if (repairResult.repaired && import.meta.env.DEV) {
+        console.log('[Evolve] Tag repairs applied:', repairResult.repairs);
+      }
+      
+      // Ensure progression is cleared after evolve
+      const newTags = updatePetsTags(repairResult.tags, {
+        progression_state: 'none',
+      });
+
+      // ─── Clear evolution from 31124 content (progression complete) ───
+      const newContent = serializeEvolutionContent(
+        generatePetsContent(canonical.companion.name, 'adult'),
+        [],
+      );
+
+      // ─── Publish Event ───
+      const event = await publishEvent({
+        kind: KIND_PETS_STATE,
+        content: newContent,
+        tags: newTags,
+        prev: canonical.companion.event,
+      });
+
+      updateCompanionEvent(event);
+
+      // ─── Clear evolution session store ───
+      if (user?.pubkey) {
+        clearEvolutionFromStorage(user.pubkey, canonical.companion.d);
+      }
+
+      return {
+        previousStage: 'baby',
+        newStage: 'adult',
+        name: canonical.companion.name,
+        decayedStats: decayResult.stats,
+      };
+    },
+    onError: (error: Error) => {
+      toast({
+        title: 'Failed to evolve',
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
+}

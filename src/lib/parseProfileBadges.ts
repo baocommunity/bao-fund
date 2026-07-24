@@ -1,0 +1,57 @@
+import type { NostrEvent } from '@nostrify/nostrify';
+
+import { isProfileBadgesEvent } from '@/lib/badgeUtils';
+import { parseAddr } from '@/lib/parseAddr';
+
+/** A parsed badge reference from a profile badges event. */
+export interface BadgeRef {
+  /** The `a` tag value referencing a kind 30009 badge definition. */
+  aTag: string;
+  /** The `e` tag value referencing a kind 8 badge award event. */
+  eTag?: string;
+  /** Parsed components from the `a` tag. */
+  kind: number;
+  pubkey: string;
+  identifier: string;
+}
+
+/**
+ * Parse a NIP-58 profile badges event (kind 10008, or legacy kind 30008 with
+ * `d=profile_badges`) into badge references.
+ *
+ * Returns an empty array for NIP-51 badge sets (kind 30008 with arbitrary
+ * `d`) — those are categorized groups of badges, not a user's accepted
+ * badge showcase, and should be rendered by the dedicated badge-set path.
+ */
+export function parseProfileBadges(event: NostrEvent): BadgeRef[] {
+  if (!isProfileBadgesEvent(event)) return [];
+
+  const refs: BadgeRef[] = [];
+  const tags = event.tags;
+
+  for (let i = 0; i < tags.length; i++) {
+    if (tags[i][0] === 'a' && tags[i][1]) {
+      const aTag = tags[i][1];
+      // Skip malformed references — a non-hex pubkey would crash nip19
+      // encoders downstream with "padded hex string expected".
+      const parsed = parseAddr(aTag);
+      if (!parsed || parsed.kind !== 30009) continue;
+
+      // Look for the corresponding `e` tag immediately after
+      let eTag: string | undefined;
+      if (i + 1 < tags.length && tags[i + 1][0] === 'e') {
+        eTag = tags[i + 1][1];
+      }
+
+      refs.push({ aTag, eTag, kind: parsed.kind, pubkey: parsed.pubkey, identifier: parsed.identifier });
+    }
+  }
+
+  // Deduplicate by aTag -- keep first occurrence only
+  const seen = new Set<string>();
+  return refs.filter((r) => {
+    if (seen.has(r.aTag)) return false;
+    seen.add(r.aTag);
+    return true;
+  });
+}

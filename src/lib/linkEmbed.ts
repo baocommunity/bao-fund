@@ -1,0 +1,172 @@
+import { MASTODON_SERVERS } from '@/lib/mastodonServers';
+
+/** Extract a YouTube video ID from a URL, or null if not a YouTube link. */
+export function extractYouTubeId(url: string): string | null {
+  try {
+    const u = new URL(url);
+    if ((u.hostname === 'www.youtube.com' || u.hostname === 'youtube.com' || u.hostname === 'm.youtube.com') && u.pathname === '/watch') {
+      return u.searchParams.get('v');
+    }
+    if ((u.hostname === 'www.youtube.com' || u.hostname === 'youtube.com') && u.pathname.startsWith('/embed/')) {
+      return u.pathname.split('/')[2] || null;
+    }
+    if ((u.hostname === 'www.youtube.com' || u.hostname === 'youtube.com') && u.pathname.startsWith('/shorts/')) {
+      return u.pathname.split('/')[2] || null;
+    }
+    if (u.hostname === 'youtu.be') {
+      return u.pathname.slice(1) || null;
+    }
+  } catch {
+    // not a valid URL
+  }
+  return null;
+}
+
+/** Extract a tweet/post ID from a Twitter or X URL, or null if not a tweet link. */
+export function extractTweetId(url: string): string | null {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '').replace(/^mobile\./, '');
+    if (host !== 'twitter.com' && host !== 'x.com') return null;
+    const match = u.pathname.match(/^\/[^/]+\/status\/(\d+)/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Extract a Mastodon post URL if the domain is a known Mastodon instance. */
+export function extractMastodonPost(url: string): string | null {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    if (!MASTODON_SERVERS.has(host)) return null;
+    // Match /@{user}/{id} or /@{user}@{domain}/{id} (remote posts)
+    if (/^\/@[^/]+\/\d+$/.test(u.pathname)) {
+      return url;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Spotify embed info extracted from an open.spotify.com URL. */
+export interface SpotifyEmbedInfo {
+  /** Content type: track, album, playlist, episode, show. */
+  type: string;
+  /** Spotify content ID. */
+  id: string;
+}
+
+/** Extract Spotify embed info from an open.spotify.com URL. */
+export function extractSpotifyEmbed(url: string): SpotifyEmbedInfo | null {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    if (host !== 'open.spotify.com') return null;
+    // Match /{type}/{id} where type is track, album, playlist, episode, or show
+    const match = u.pathname.match(/^\/(track|album|playlist|episode|show)\/([a-zA-Z0-9]+)/);
+    return match ? { type: match[1], id: match[2] } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Extract a Reddit post URL, or null if not a Reddit post link. */
+export function extractRedditPost(url: string): string | null {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '').replace(/^old\./, '').replace(/^new\./, '');
+    if (host !== 'reddit.com') return null;
+    // Match /r/{subreddit}/comments/{id}/...
+    if (/^\/r\/[^/]+\/comments\/[a-z0-9]+/i.test(u.pathname)) {
+      return url;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/** Extract an Internet Archive item identifier from an archive.org URL, or null if not a match. */
+export function extractArchiveOrgId(url: string): string | null {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    if (host !== 'archive.org') return null;
+    // Match /details/{identifier} or /embed/{identifier}
+    const match = u.pathname.match(/^\/(details|embed)\/([^/?#]+)/);
+    return match ? match[2] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract a Wikidata entity ID (Q…, P…, or L…) from a Wikidata URL, or null if not one.
+ *
+ * Supports the "globally unique" concept URI form described at
+ * https://www.wikidata.org/wiki/Wikidata:Identifiers:
+ *   - https://www.wikidata.org/entity/Q42
+ *   - http://www.wikidata.org/entity/Q42
+ * …as well as the browser-facing page URL:
+ *   - https://www.wikidata.org/wiki/Q42
+ */
+export function extractWikidataId(url: string): string | null {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    if (host !== 'wikidata.org') return null;
+    // Match /entity/{id} or /wiki/{id} where id is Q|P|L followed by digits.
+    const match = u.pathname.match(/^\/(?:entity|wiki)\/([QPL]\d+)$/);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Extract a Wikipedia article title from a Wikipedia URL, or null if not a Wikipedia article link.
+ * Supports en.wikipedia.org/wiki/{title} and other language subdomains.
+ */
+export function extractWikipediaTitle(url: string): string | null {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '');
+    // Match {lang}.wikipedia.org
+    if (!host.endsWith('.wikipedia.org')) return null;
+    // Match /wiki/{title} — ignore special pages, talk pages, etc.
+    const match = u.pathname.match(/^\/wiki\/([^:][^#]*)$/);
+    if (!match) return null;
+    return decodeURIComponent(match[1].replace(/_/g, ' '));
+  } catch {
+    return null;
+  }
+}
+
+
+/** Returns true if the URL should be rendered as a rich embed rather than a plain link. */
+export function isEmbeddableUrl(url: string): boolean {
+  return !!extractYouTubeId(url) || !!extractTweetId(url)
+    || !!extractMastodonPost(url) || !!extractSpotifyEmbed(url) || !!extractRedditPost(url)
+    || !!extractArchiveOrgId(url);
+}
+
+/** Get a short label for the embed type. */
+export function embedLabel(url: string): string | null {
+  if (extractYouTubeId(url)) return 'YouTube';
+  if (extractTweetId(url)) return 'Twitter';
+  if (extractMastodonPost(url)) return 'Mastodon';
+  if (extractSpotifyEmbed(url)) return 'Spotify';
+  if (extractRedditPost(url)) return 'Reddit';
+  if (extractArchiveOrgId(url)) return 'Internet Archive';
+  try {
+    if (new URL(url).hostname.replace(/^www\./, '').endsWith('lightningobservatory.com')) {
+      return 'Lightning Observatory';
+    }
+  } catch {
+    // ignore invalid URL
+  }
+  return null;
+}

@@ -1,0 +1,366 @@
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { useNostr } from '@nostrify/react';
+
+import { useCurrentUser } from '@/hooks/useCurrentUser';
+import { useAppContext } from '@/hooks/useAppContext';
+import { usePetsNostrPublish } from '@/pets/core/hooks/usePetsNostrPublish';
+import { toast } from '@/hooks/useToast';
+import type { CashuWalletActions, CashuWalletState } from '@/hooks/useCashuWallet';
+import { updateNostrPetProfile } from '@/pets/core/lib/profile-sats';
+import type { NostrEvent } from '@nostrify/nostrify';
+
+import type { CashuWallet, MintKeyset } from '@cashu/cashu-ts';
+
+import type { PurchaseRequest } from '../types/shop.types';
+import type { NostrPetProfile, PetsCompanion, StorageItem } from '@/pets/core/lib/pets';
+import {
+  KIND_PETS_STATE,
+  updateNostrPetProfileTags,
+  createStorageTags,
+  updatePetsTags,
+} from '@/pets/core/lib/pets';
+import { getShopItemById } from '../lib/pets-shop-items';
+
+function getSelectedMintBalance(wallet?: (CashuWalletState & CashuWalletActions) | null): number {
+  if (!wallet?.mintUrl) return 0;
+  return wallet.balances?.[wallet.mintUrl] ?? 0;
+}
+
+/**
+ * Estimate the Cashu mint fee for sending a given amount of sats from the
+ * active keyset. The real fee depends on the actual proofs selected, so this
+ * returns a conservative reserve based on the active keyset's input_fee_ppk.
+ * A small buffer is added so the UI does not advertise an item as affordable
+ * when the wallet would fail due to rounding or a minimal fee.
+ */
+export function estimateCashuSendFee(amount: number, wallet: CashuWallet | null): number {
+  if (!wallet || amount <= 0) return 0;
+  try {
+    const activeKeyset = wallet.keysets.find((k: MintKeyset) => k.id === wallet.keysetId);
+    const ppk = activeKeyset?.input_fee_ppk ?? 0;
+    return Math.max(1, Math.ceil((amount * ppk) / 1000) + 1);
+  } catch {
+    // If keysets are unavailable, reserve 1% as a safe fallback.
+    return Math.max(1, Math.ceil(amount * 0.01));
+  }
+}
+
+/** Minimum pet-bound fiat balance to keep as a reserve before falling back to wallet rails. */
+const PET_FIAT_RESERVE_SATS = 100;
+
+/**
+ * Compute how much of a sats-priced purchase should be covered by the pet's
+ * bound fiat balance vs the wallet. The pet always spends first, but we leave
+ * a small reserve so the pet is not emptied to zero.
+ */
+function splitSatsPayment(
+  totalSatsCost: number,
+  petFiatBalance: number,
+): { petFiatSpend: number; walletSatsCost: number } {
+  if (totalSatsCost <= 0) return { petFiatSpend: 0, walletSatsCost: 0 };
+  if (petFiatBalance <= 0) return { petFiatSpend: 0, walletSatsCost: totalSatsCost };
+
+  // If the pet can pay the whole cost and still keep the reserve, use pet fiat only.
+  if (petFiatBalance >= totalSatsCost + PET_FIAT_RESERVE_SATS) {
+    return { petFiatSpend: totalSatsCost, walletSatsCost: 0 };
+  }
+
+  // If the pet balance itself is below the reserve, do not touch it; fall back to wallet.
+  if (petFiatBalance < PET_FIAT_RESERVE_SATS) {
+    return { petFiatSpend: 0, walletSatsCost: totalSatsCost };
+  }
+
+  // Spend pet fiat down to the reserve, cover the rest with the wallet.
+  const petFiatSpend = petFiatBalance - PET_FIAT_RESERVE_SATS;
+  return { petFiatSpend, walletSatsCost: totalSatsCost - petFiatSpend };
+}
+
+/**
+ * Hook to purchase items from the Pets Shop.
+ *
+ * Handles:
+ * - Pet-bound fiat balance first for sats-priced items
+ * - Sats payment via a nutzap to the 2140 treasury from the active wallet:
+ *   the real Cashu wallet in mainnet mode, the BAO signet Cashu wallet in
+ *   demo mode. Same rail, separated by mint — demo sats are valueless.
+ * - Storage updates (stacking or adding new items)
+ * - Atomic profile update
+ */
+export function usePetsPurchaseItem(
+  currentProfile: NostrPetProfile | null,
+  companion?: PetsCompanion | null,
+  externalWallet?: (CashuWalletState & CashuWalletActions) | null,
+  onCompanionUpdated?: (event: NostrEvent) => void,
+) {
+  const { user } = useCurrentUser();
+  const { nostr } = useNostr();
+  const { config } = useAppContext();
+  const { mutateAsync: publishEvent } = usePetsNostrPublish();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({ itemId, price, quantity, currency: requestedCurrency }: PurchaseRequest) => {
+      if (!user?.pubkey) {
+        throw new Error('You must be logged in to purchase items');
+      }
+
+      if (!currentProfile) {
+        throw new Error('Profile not found');
+      }
+
+      if (!Number.isInteger(quantity) || quantity <= 0) {
+        throw new Error('Invalid quantity. Quantity must be a positive whole number.');
+      }
+
+      // Validate item exists in catalog
+      const item = getShopItemById(itemId);
+      if (!item) {
+        throw new Error('Item not found in shop catalog');
+      }
+
+      if (item.status !== 'live') {
+        throw new Error('This item is not currently available for purchase.');
+      }
+
+      const fiatPrice = item.fiatPrice ?? item.price;
+      const satsPrice = item.satsPrice ?? item.price;
+      const totalFiatCost = fiatPrice * quantity;
+      const totalSatsCost = satsPrice * quantity;
+
+      // Use the current profile for initial wallet-mode decisions; the serialized
+      // update below re-reads the freshest profile before publishing.
+      const isCashuMode = currentProfile.walletMode === 'cashu';
+
+      // Determine the intended currency from the explicit request or the price.
+      // Reject mismatched price/currency pairs so the button price always
+      // matches the currency actually deducted.
+      let resolvedCurrency: 'fiat' | 'sats';
+      if (requestedCurrency) {
+        if (requestedCurrency === 'fiat' && price === fiatPrice) {
+          resolvedCurrency = 'fiat';
+        } else if (requestedCurrency === 'sats' && price === satsPrice) {
+          resolvedCurrency = 'sats';
+        } else {
+          throw new Error('Item price and currency do not match. Please refresh and try again.');
+        }
+      } else {
+        // For real-sats wallets default to sats when a price is ambiguous;
+        // otherwise prefer the in-game fiat coin price.
+        if (isCashuMode) {
+          if (price === satsPrice) {
+            resolvedCurrency = 'sats';
+          } else if (price === fiatPrice) {
+            resolvedCurrency = 'fiat';
+          } else {
+            throw new Error('Item price mismatch. Please refresh and try again.');
+          }
+        } else {
+          if (price === fiatPrice) {
+            resolvedCurrency = 'fiat';
+          } else if (price === satsPrice) {
+            resolvedCurrency = 'sats';
+          } else {
+            throw new Error('Item price mismatch. Please refresh and try again.');
+          }
+        }
+      }
+
+      let currency: 'fiat coins' | 'demo sats' | 'sats' = 'fiat coins';
+      let totalCost = 0;
+      let treasuryPaid = false;
+      let petFiatSpend = 0;
+      let walletSatsCost = 0;
+
+      if (resolvedCurrency === 'sats') {
+        currency = isCashuMode ? 'sats' : 'demo sats';
+        totalCost = totalSatsCost;
+
+        // Split the cost between pet-bound fiat and the wallet.
+        const split = splitSatsPayment(totalSatsCost, companion?.fiatBalance ?? 0);
+        petFiatSpend = split.petFiatSpend;
+        walletSatsCost = split.walletSatsCost;
+
+        if (walletSatsCost > 0) {
+          // Both modes pay the 2140 treasury by nutzap. In mainnet mode the
+          // active wallet is the user's real Cashu wallet; in demo mode it is
+          // the BAO signet Cashu wallet (valueless sats on the BAO mint).
+          if (!externalWallet) {
+            throw new Error('External wallet is not available.');
+          }
+          const treasuryNpub = config.petsTreasuryNpub;
+          if (!treasuryNpub) {
+            throw new Error('Pets treasury is not configured.');
+          }
+          if (!externalWallet.mintUrl) {
+            throw new Error('Select a mint in your Cashu wallet before buying with sats.');
+          }
+          const selectedMintBalance = getSelectedMintBalance(externalWallet);
+          const feeReserve = estimateCashuSendFee(walletSatsCost, externalWallet.wallet ?? null);
+          const totalNeeded = walletSatsCost + feeReserve;
+          if (selectedMintBalance < totalNeeded) {
+            throw new Error(
+              `Insufficient balance on the selected mint. You need ${walletSatsCost.toLocaleString()} sats + ~${feeReserve.toLocaleString()} sats fee (${totalNeeded.toLocaleString()} total) but only have ${selectedMintBalance.toLocaleString()} sats on ${externalWallet.mintUrl ?? 'the selected mint'}.`
+            );
+          }
+          // Pay the 2140 treasury BEFORE updating the profile so a payment failure
+          // cannot grant a free item. Nutzaps cannot be clawed back automatically;
+          // if the profile update fails after this point we surface a clear error
+          // so support can refund from the treasury side.
+          const sent = await externalWallet.sendNutzap(walletSatsCost, treasuryNpub, externalWallet.mintUrl, {
+            memo: `Pets shop: ${item.name}`,
+          });
+          if (!sent) {
+            throw new Error(externalWallet.error ?? 'Payment to the Pets treasury failed.');
+          }
+          treasuryPaid = true;
+        }
+      } else {
+        currency = 'fiat coins';
+        totalCost = totalFiatCost;
+      }
+
+      // If pet-bound fiat is being spent, publish the companion update first.
+      // This happens outside the profile serialization because it is a different
+      // kind (31124 vs 11125), but it is idempotent: a failure here stops the
+      // purchase before any wallet money moves.
+      let companionEvent: NostrEvent | undefined;
+      if (petFiatSpend > 0 && companion) {
+        const newFiatBalance = Math.max(0, companion.fiatBalance - petFiatSpend);
+        const petTags = updatePetsTags(companion.event.tags, {
+          fiat_balance: newFiatBalance.toString(),
+        });
+        companionEvent = await publishEvent({
+          kind: KIND_PETS_STATE,
+          content: companion.event.content,
+          tags: petTags,
+        });
+      }
+
+      // Serialize the profile update so concurrent purchases/missions cannot
+      // overwrite each other and double-spend in-game currency. The wallet mode
+      // used for deductions is pinned to the mode at the time the user clicked
+      // buy; if it changed between the UI render and the serialized update we
+      // still honor the real-sats payment that was already made and do not
+      // double-charge (or grant a free item) by re-deriving the currency.
+      let result;
+      try {
+        result = await updateNostrPetProfile(nostr, publishEvent, user.pubkey, (freshProfile) => {
+          if (!freshProfile) {
+            throw new Error('Profile not found on relays');
+          }
+
+          if (resolvedCurrency === 'fiat') {
+            if (freshProfile.coins < totalFiatCost) {
+              throw new Error(
+                `Insufficient fiat coins. You need ${totalFiatCost.toLocaleString()} but have ${freshProfile.coins.toLocaleString()}.`
+              );
+            }
+          }
+          // Sats purchases were already paid by nutzap from the active wallet
+          // before this serialized update — the profile `sats` tag is never
+          // spent by the shop in either mode.
+
+          // Recompute the purchase deltas from the fresh profile so concurrent
+          // updates on other devices are not silently overwritten.
+          const existingIndex = freshProfile.storage.findIndex((s) => s.itemId === itemId);
+          let newStorage: StorageItem[];
+
+          if (existingIndex >= 0) {
+            // Stack: increase quantity of existing item
+            newStorage = [...freshProfile.storage];
+            newStorage[existingIndex] = {
+              ...newStorage[existingIndex],
+              quantity: newStorage[existingIndex].quantity + quantity,
+            };
+          } else {
+            // Add: append new item to storage
+            newStorage = [...freshProfile.storage, { itemId, quantity }];
+          }
+
+          // Build updated tags
+          // createStorageTags returns [['storage', 'itemId:quantity'], ...], we need just the values
+          const storageValues = createStorageTags(newStorage).map((tag) => tag[1]);
+
+          const updates: Record<string, string | string[]> = {
+            storage: storageValues,
+          };
+          if (resolvedCurrency === 'fiat') {
+            updates.coins = (freshProfile.coins - totalFiatCost).toString();
+          }
+
+          const tags = updateNostrPetProfileTags(freshProfile.event.tags, updates);
+          return { tags, content: freshProfile.event.content, meta: { currency, totalCost, petFiatSpend } };
+        });
+      } catch (profileError) {
+        // Roll back any companion fiat deduction before rethrowing.
+        if (companionEvent && companion && petFiatSpend > 0) {
+          try {
+            const rollbackTags = updatePetsTags(companionEvent.tags, {
+              fiat_balance: companion.fiatBalance.toString(),
+            });
+            await publishEvent({
+              kind: KIND_PETS_STATE,
+              content: companion.event.content,
+              tags: rollbackTags,
+              prev: companionEvent,
+            });
+            console.warn('[usePetsPurchaseItem] Restored pet fiat balance after profile update failure.');
+          } catch (rollbackError) {
+            console.error('[usePetsPurchaseItem] Failed to restore pet fiat balance after profile update failure:', rollbackError);
+          }
+        }
+        if (treasuryPaid) {
+          // The nutzap already reached the treasury relays and cannot be clawed
+          // back automatically. Tell the user exactly what happened so support
+          // can refund from the treasury side.
+          console.error('[usePetsPurchaseItem] Profile update failed after treasury payment:', profileError);
+          throw new Error(
+            'Your payment was sent to the 2140 treasury, but the purchase could not be completed. ' +
+              'Please contact 2140 support for a refund.',
+          );
+        }
+        throw profileError;
+      }
+
+      if (!result) {
+        throw new Error('Profile update returned no changes.');
+      }
+
+      // Notify the caller about the updated companion so the UI can optimistically
+      // refresh the pet's fiat balance.
+      if (companionEvent) {
+        onCompanionUpdated?.(companionEvent);
+      }
+
+      return {
+        event: result.event,
+        item,
+        quantity,
+        totalCost: (result.meta?.totalCost as number | undefined) ?? totalCost,
+        currency: (result.meta?.currency as typeof currency | undefined) ?? currency,
+        petFiatSpend: (result.meta?.petFiatSpend as number | undefined) ?? 0,
+      };
+    },
+    onSuccess: ({ item, quantity, totalCost, currency, petFiatSpend }) => {
+      // Invalidate profile query to refetch fresh data
+      if (user?.pubkey) {
+        queryClient.invalidateQueries({ queryKey: ['nostr-pet-profile', user.pubkey] });
+      }
+
+      // Show success toast
+      const petPart = petFiatSpend > 0 ? ` (${petFiatSpend.toLocaleString()} from pet fiat)` : '';
+      toast({
+        title: 'Purchase Successful!',
+        description: `You bought ${item.name} (×${quantity}) for ${totalCost.toLocaleString()} ${currency}.${petPart}`,
+      });
+    },
+    onError: (error: Error) => {
+      // Show error toast
+      toast({
+        title: 'Purchase Failed',
+        description: error.message,
+        variant: 'destructive',
+      });
+    },
+  });
+}

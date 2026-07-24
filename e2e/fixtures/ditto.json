@@ -1,0 +1,42 @@
+{
+  "appName": "\u20bfAO Fund",
+  "appId": "2140wtf",
+  "theme": "dark",
+  "themes": {
+    "dark": {
+      "colors": {
+        "background": "0 0% 4%",
+        "text": "0 0% 98%",
+        "primary": "32.9 93.2% 53.5%"
+      }
+    },
+    "light": {
+      "colors": {
+        "background": "0 0% 98%",
+        "text": "0 0% 10%",
+        "primary": "32.9 93.2% 53.5%"
+      }
+    }
+  },
+  "relayMetadata": {
+    "relays": [],
+    "updatedAt": 1781714000
+  },
+  "feedSettings": {
+    "feedIncludeArticles": true,
+    "showArticles": true,
+    "showEvents": true,
+    "feedIncludeEvents": true
+  },
+  "sidebarOrder": [
+    "chat",
+    "fund",
+    "pets",
+    "wallet",
+    "settings"
+  ],
+  "sidebarOrderVersion": 13,
+  "useAppRelays": true,
+  "useUserRelays": false,
+  "contentWarningPolicy": "blur"
+}
