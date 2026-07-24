@@ -16,7 +16,8 @@ test.describe('smoke', () => {
     const monitor = attachMonitor(page);
     await page.goto('/', { waitUntil: 'load' });
 
-    await expect(page.getByRole('heading', { name: '₿AO Fund' })).toBeVisible({ timeout: DEFAULT_TIMEOUT });
+    // LandingPage has both an h1 hero and an h2 feature card named '₿AO Fund' — target the h1 (strict mode).
+    await expect(page.getByRole('heading', { name: '₿AO Fund', level: 1 })).toBeVisible({ timeout: DEFAULT_TIMEOUT });
     await expect(page.getByRole('button', { name: 'Join ₿AO Fund' })).toBeVisible();
 
     monitor.assertNoFailures();

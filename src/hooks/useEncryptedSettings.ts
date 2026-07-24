@@ -17,6 +17,20 @@ import { EncryptedSettingsSchema } from '@/lib/schemas';
 import { toast } from '@/hooks/useToast';
 
 /**
+ * Relay d-tag for this app's encrypted settings (kind 30078).
+ *
+ * The ₿AO Fund app intentionally keeps the "2140" appId for its LOCAL storage
+ * prefixes, but it must NOT share 2140.wtf's synced-settings event: both apps
+ * would otherwise fight over the same kind-30078 record (e.g. a 2140.wtf
+ * sidebarOrder of feed/notifications/messages IDs renders as an empty sidebar
+ * here, and this app's 5-item order would strip those items back in 2140.wtf).
+ * A distinct d-tag gives each app its own cross-device sync namespace.
+ */
+export function settingsDTag(appId: string): string {
+  return `${appId}-fund/metadata`;
+}
+
+/**
  * Timestamp (ms) of last local encrypted-settings write this session.
  * NostrSync uses this to avoid overwriting a local edit with a stale relay event.
  */
@@ -201,7 +215,7 @@ export function useEncryptedSettings() {
       const filter: NostrFilter = {
         kinds: [30078],
         authors: [user.pubkey],
-        '#d': [`${config.appId}/metadata`],
+        '#d': [settingsDTag(config.appId)],
         limit: 1,
       };
 
@@ -299,7 +313,7 @@ export function useEncryptedSettings() {
         const freshEvent = await fetchFreshEvent(nostr, {
           kinds: [30078],
           authors: [user.pubkey],
-          '#d': [`${config.appId}/metadata`],
+          '#d': [settingsDTag(config.appId)],
         });
         // fetchFreshEvent verifies the signature and author, but double-check
         // before we decrypt and merge so a malicious relay response can't roll
@@ -365,7 +379,7 @@ export function useEncryptedSettings() {
 
       // Build tags; try to upload a redundant Blossom backup in the background.
       const tags: string[][] = [
-        ['d', `${config.appId}/metadata`],
+        ['d', settingsDTag(config.appId)],
         ['title', `${config.appName} Metadata`],
         ['client', config.appName, ...(config.client ? [config.client] : [])],
       ];

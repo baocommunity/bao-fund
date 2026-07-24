@@ -1,7 +1,5 @@
 import { useMemo } from 'react';
-import { Link } from 'react-router-dom';
-import { Check, ExternalLink, Zap } from 'lucide-react';
-import { nip19 } from 'nostr-tools';
+import { Check, ExternalLink } from 'lucide-react';
 import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { Button } from '@/components/ui/button';
 import { getAvatarShape } from '@/lib/avatarShape';
@@ -177,23 +175,15 @@ export function ZapSuccessScreen({
             asChild
             className="w-full"
           >
-            <Link to={`/i/bitcoin:tx:${txid}`} onClick={onClose}>
+            <a
+              href={`https://mempool.space/tx/${txid}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={onClose}
+            >
               <ExternalLink className="size-4 mr-2" />
               View transaction
-            </Link>
-          </Button>
-        )}
-        {eventId && (
-          <Button
-            type="button"
-            variant="outline"
-            asChild
-            className="w-full"
-          >
-            <Link to={`/${nip19.neventEncode({ id: eventId })}`} onClick={onClose}>
-              <Zap className="size-4 mr-2" />
-              View Nutzap
-            </Link>
+            </a>
           </Button>
         )}
         <Button type="button" onClick={onClose} className="w-full">

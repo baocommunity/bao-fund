@@ -21,6 +21,7 @@ import { useResetChunkRecoveryOnLoad } from "@/hooks/useResetChunkRecoveryOnLoad
 import type { AppConfig } from "@/contexts/AppContext";
 import { NWCProvider } from "@/contexts/NWCContext";
 import { CashuWalletProvider } from "@/contexts/CashuWalletContext";
+import { DmInboxProvider } from "@/contexts/DmInboxContext";
 import { AppConfigSchema, type AppConfig as AppBuildConfig } from "@/lib/schemas";
 import { secureStorage } from "@/lib/secureStorage";
 import { createEncryptedLoginStorage } from "@/lib/encryptedLoginStorage";
@@ -255,6 +256,7 @@ export function App() {
                     <NWCProvider>
                       <EmotionDevProvider>
                         <TooltipProvider>
+                          <DmInboxProvider>
                             <CashuWalletProvider>
                               <RemoteBattleProvider>
                                   <AppRouter />
@@ -270,6 +272,7 @@ export function App() {
                                 <DecryptConsentDialog />
                               </RemoteBattleProvider>
                             </CashuWalletProvider>
+                          </DmInboxProvider>
                         </TooltipProvider>
                       </EmotionDevProvider>
                     </NWCProvider>

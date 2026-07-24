@@ -7,7 +7,7 @@ import { EncryptedSettingsSchema } from "@/lib/schemas";
 import { getStorageKey } from "@/lib/storageKey";
 import { useAppContext } from "./useAppContext";
 import { useCurrentUser } from "./useCurrentUser";
-import { type EncryptedSettings, setLocalSettingsSync, setLocalSettingsCreatedAt } from "./useEncryptedSettings";
+import { type EncryptedSettings, setLocalSettingsSync, setLocalSettingsCreatedAt, settingsDTag } from "./useEncryptedSettings";
 import {
   type MuteListItem,
   parseMuteTags,
@@ -139,7 +139,7 @@ export function useInitialSync() {
                   {
                     kinds: [30078],
                     authors: [user.pubkey],
-                    "#d": [`${config.appId}/metadata`],
+                    "#d": [settingsDTag(config.appId)],
                     limit: 1,
                   },
                 ],

@@ -1,4 +1,3 @@
-import { Link } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { ExternalFavicon } from '@/components/ExternalFavicon';
 import { formatNip05Display, getNip05Domain, getNip05User } from '@/lib/nip05';
@@ -24,7 +23,7 @@ interface Nip05BadgeProps {
  *
  * - `_@domain.com` renders as `@domain.com` (domain is clickable → domain feed)
  * - `user@domain.com` renders as `@user@domain.com` (domain part is clickable → domain feed)
- * - The domain text and favicon are both clickable links to `/feed/{domain}`
+ * - The domain text and favicon are display-only (no /feed route in this app)
  * - Returns null while verifying or if verification fails.
  */
 /**
@@ -71,38 +70,23 @@ export function Nip05Badge({ nip05, pubkey, className, iconSize = 16, showCheck 
     <span className={cn('inline-flex items-center min-w-0', className)}>
       {showCheck && <CheckCircle2 className="size-3.5 text-primary shrink-0 mr-1 mt-[0.2rem]" />}
       {isDefaultUser ? (
-        <Link
-          to={`/feed/${domain}`}
-          className="truncate min-w-0 hover:underline"
-          onClick={(e) => e.stopPropagation()}
-          title={`View ${domain} feed`}
-        >
+        <span className="truncate min-w-0" title={domain}>
           @{domain}
-        </Link>
+        </span>
       ) : (
         <>
           <span className="truncate min-w-0">@{user}@</span>
           {domain && (
-            <Link
-              to={`/feed/${domain}`}
-              className="shrink-0 hover:underline"
-              onClick={(e) => e.stopPropagation()}
-              title={`View ${domain} feed`}
-            >
+            <span className="shrink-0" title={domain}>
               {domain}
-            </Link>
+            </span>
           )}
         </>
       )}
       {domain && (
-        <Link
-          to={`/feed/${domain}`}
-          className="inline-flex items-center shrink-0 ml-1 hover:opacity-80 transition-opacity"
-          onClick={(e) => e.stopPropagation()}
-          title={`View ${domain} feed`}
-        >
+        <span className="inline-flex items-center shrink-0 ml-1" title={domain}>
           <ExternalFavicon url={`https://${domain}`} size={iconSize} className="shrink-0" />
-        </Link>
+        </span>
       )}
     </span>
   );

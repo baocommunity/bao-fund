@@ -27,7 +27,8 @@ export function FollowQRDialog({ open, onOpenChange }: FollowQRDialogProps) {
   const displayName = user ? metadata?.name || metadata?.display_name || 'Anonymous' : '';
 
   const npub = user ? nip19.npubEncode(user.pubkey) : '';
-  const followUrl = npub ? `${shareOrigin}/follow/${npub}` : '';
+  // No dedicated /follow route in this app — the profile page (`/:nip19`) is the share target.
+  const followUrl = npub ? `${shareOrigin}/${npub}` : '';
 
   useEffect(() => {
     if (!followUrl || !open) return;

@@ -3757,10 +3757,16 @@ function PetsTabContent({
 
       {/* ── Quick actions row ── */}
       <div className="flex items-center justify-center gap-6 pt-1">
-        <Link to={`/${petsNaddr}`} className="flex flex-col items-center gap-1 text-muted-foreground hover:text-foreground transition-colors">
+        {/* No naddr detail route in this app — open the pet's public address externally. */}
+        <a
+          href={`https://njump.me/${petsNaddr}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="flex flex-col items-center gap-1 text-muted-foreground hover:text-foreground transition-colors"
+        >
           <ExternalLink className="size-5" />
           <span className="text-[10px]">View</span>
-        </Link>
+        </a>
         <Link to="/settings/pets" className="flex flex-col items-center gap-1 text-muted-foreground hover:text-foreground transition-colors">
           <Settings className="size-5" />
           <span className="text-[10px]">Settings</span>

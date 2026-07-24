@@ -16,7 +16,6 @@ import { EmojiPicker, type EmojiSelection } from '@/components/EmojiPicker';
 import { useProfileBadges } from '@/hooks/useProfileBadges';
 import { useBadgeDefinitions } from '@/hooks/useBadgeDefinitions';
 import { BadgeShowcaseGrid } from '@/components/BadgeShowcaseGrid';
-import { useCurrentUser } from '@/hooks/useCurrentUser';
 import { sanitizeUrl } from '@/lib/sanitizeUrl';
 
 /** Shared classes for all editable fields — static muted bg when idle, border on hover/focus */
@@ -120,8 +119,6 @@ export function ProfileCard({
   const [fieldsOpen, setFieldsOpen] = useState(false);
   const [emojiPickerOpen, setEmojiPickerOpen] = useState(false);
 
-  const { user } = useCurrentUser();
-  const isOwnProfile = !!pubkey && !!user && pubkey === user.pubkey;
   const { refs: badgeRefs, isLoading: badgesLoading } = useProfileBadges(pubkey);
   const { badgeMap, isLoading: defsLoading } = useBadgeDefinitions(badgeRefs);
 
@@ -437,7 +434,6 @@ export function ProfileCard({
             }))}
             maxVisible={8}
             thumbnailSize={44}
-            showEditButton={isOwnProfile}
             isLoading={badgesLoading || defsLoading}
             gridCols="grid-cols-4 sm:grid-cols-5"
           />

@@ -1,9 +1,5 @@
-import { Link } from 'react-router-dom';
-import { Award, Pencil } from 'lucide-react';
-import { nip19 } from 'nostr-tools';
-
+import { Award } from 'lucide-react';
 import { BadgeThumbnail } from '@/components/BadgeThumbnail';
-import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
 import type { BadgeData } from '@/lib/parseBadgeDefinition';
 import { cn } from '@/lib/utils';
@@ -24,10 +20,6 @@ interface BadgeShowcaseGridProps {
   thumbnailSize?: number;
   /** Show badge names below thumbnails. Default: true */
   showNames?: boolean;
-  /** Show edit button (own profile). */
-  showEditButton?: boolean;
-  /** Edit button link target. */
-  editPath?: string;
   /** Whether data is loading. */
   isLoading?: boolean;
   /** Grid columns class. Default: "grid-cols-4 sm:grid-cols-6" */
@@ -40,8 +32,6 @@ export function BadgeShowcaseGrid({
   maxVisible = 12,
   thumbnailSize = 48,
   showNames = true,
-  showEditButton,
-  editPath = '/badges',
   isLoading,
   gridCols = 'grid-cols-4 sm:grid-cols-6',
   className,
@@ -68,15 +58,12 @@ export function BadgeShowcaseGrid({
     <div className={cn('space-y-2', className)}>
       <div className={cn('grid gap-3', gridCols)}>
         {visible.map((item) => {
-          const badgeUrl = `/${nip19.naddrEncode({ kind: 30009, pubkey: item.pubkey, identifier: item.identifier })}`;
-
+          // No badge detail route in this app — thumbnails are display-only.
           return (
-            <Link
+            <div
               key={item.aTag}
-              to={badgeUrl}
               className="flex flex-col items-center gap-1.5 group"
               title={item.badge?.description || item.badge?.name || item.identifier}
-              onClick={(e) => e.stopPropagation()}
             >
               {item.badge ? (
                 <BadgeThumbnail badge={item.badge} size={thumbnailSize} />
@@ -93,7 +80,7 @@ export function BadgeShowcaseGrid({
                   {item.badge?.name || item.identifier}
                 </span>
               )}
-            </Link>
+            </div>
           );
         })}
         {remaining > 0 && (
@@ -107,16 +94,6 @@ export function BadgeShowcaseGrid({
           </div>
         )}
       </div>
-      {showEditButton && editPath && (
-        <div className="flex justify-end">
-          <Button variant="ghost" size="sm" className="h-7 text-xs gap-1 text-muted-foreground" asChild>
-            <Link to={editPath}>
-              <Pencil className="size-3" />
-              Edit Badges
-            </Link>
-          </Button>
-        </div>
-      )}
     </div>
   );
 }

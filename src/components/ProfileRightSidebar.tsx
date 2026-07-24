@@ -237,14 +237,6 @@ function MediaTile({ item }: { item: MediaItem }) {
   );
 }
 
-/** Build a nevent/naddr link for navigating to an event. */
-function eventLink(item: MediaItem): string {
-  if (item.kind && item.kind >= 30000 && item.kind < 40000 && item.dTag !== undefined) {
-    return `/${nip19.naddrEncode({ kind: item.kind, pubkey: item.authorPubkey, identifier: item.dTag })}`;
-  }
-  return `/${nip19.neventEncode({ id: item.eventId, author: item.authorPubkey })}`;
-}
-
 /** Bitcoin QR code modal */
 function BitcoinQRModal({ address }: { address: string }) {
   const [qrUrl, setQrUrl] = useState('');
@@ -693,9 +685,9 @@ export function ProfileRightSidebar({ fields, pubkey, onMediaClick, className }:
                       }
                       return (
                         <div key={i} style={cellStyle} className="rounded-lg overflow-hidden h-full">
-                          <Link to={eventLink(item)} className="absolute inset-0 block">
+                          <div className="absolute inset-0 block">
                             {cwInner}
-                          </Link>
+                          </div>
                         </div>
                       );
                     }
@@ -714,12 +706,9 @@ export function ProfileRightSidebar({ fields, pubkey, onMediaClick, className }:
                     }
                     return (
                       <div key={i} style={cellStyle} className="rounded-lg overflow-hidden h-full">
-                        <Link
-                          to={eventLink(item)}
-                          className="absolute inset-0 hover:opacity-80 transition-opacity block"
-                        >
+                        <div className="absolute inset-0 block">
                           <MediaTile item={item} />
-                        </Link>
+                        </div>
                       </div>
                     );
                   })}

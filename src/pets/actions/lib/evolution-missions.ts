@@ -9,6 +9,11 @@
  *   - Are populated when incubation/evolution starts
  *   - Are cleared when the stage transition completes (or is cancelled)
  *   - Are NOT deterministically seeded — the full set is always used
+ *
+ * NOTE (₿AO Fund strip): the theme-creation missions were removed — the
+ * /themes publisher doesn't exist in this app, so kind-36767 missions could
+ * never complete and pets could never hatch/evolve. `migrateEvolutionMissions`
+ * drops the removed IDs from in-flight pets automatically.
  */
 
 import type { Mission, TallyMission, EventMission } from '@/pets/core/lib/missions';
@@ -49,16 +54,6 @@ export interface EvolutionMissionDefinition {
 
 export const HATCH_MISSIONS: readonly EvolutionMissionDefinition[] = [
   {
-    id: 'create_theme',
-    title: 'Create Theme',
-    description: 'Create a custom theme for your profile',
-    target: 1,
-    tracking: 'event',
-    action: 'navigate',
-    actionTarget: '/themes',
-    actionLabel: 'Create Theme',
-  },
-  {
     id: 'interactions',
     title: 'Interact with NOSTR PET',
     description: 'Care for your NOSTR PET 7 times',
@@ -70,16 +65,6 @@ export const HATCH_MISSIONS: readonly EvolutionMissionDefinition[] = [
 // ─── Evolve Mission Pool ─────────────────────────────────────────────────────
 
 export const EVOLVE_MISSIONS: readonly EvolutionMissionDefinition[] = [
-  {
-    id: 'create_themes',
-    title: 'Create Themes',
-    description: 'Create 3 custom themes',
-    target: 3,
-    tracking: 'event',
-    action: 'navigate',
-    actionTarget: '/themes',
-    actionLabel: 'Create Theme',
-  },
   {
     id: 'interactions',
     title: 'Interact with NOSTR PET',

@@ -76,10 +76,10 @@ export function useForegroundNotifications(): void {
         if (cand.createdAt <= sessionFloor.current) continue;
         if (!cand.path || !cand.channelIdHex) continue; // no community route resolved
 
-        // Recover the community id from the route (`/c/<communityId>/<channel>`)
-        // to resolve the per-channel level.
+        // Recover the community id from the route (`/c/<communityId>/<channel>`
+        // → ['', 'c', communityId, channelId]) to resolve the per-channel level.
         const parts = cand.path.split("/");
-        const communityId = parts[3] ? decodeURIComponent(parts[3]) : "";
+        const communityId = parts[2] ? decodeURIComponent(parts[2]) : "";
         if (!communityId) continue;
 
         // Notification-level gate — this also covers muted communities and

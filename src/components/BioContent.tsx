@@ -1,5 +1,4 @@
 import { useMemo, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
 import { buildEmojiMap } from '@/lib/customEmoji';
 import { HASHTAG_PATTERN } from '@/lib/hashtag';
 import { CustomEmojiImg } from '@/components/CustomEmoji';
@@ -124,7 +123,7 @@ interface BioContentProps {
  * Renders bio/about text with linkified URLs and hashtags, plus NIP-30 custom emoji support.
  *
  * This is a lightweight alternative to NoteContent specifically for profile bios.
- * It handles URLs (as clickable links) and hashtags (as internal links to /t/<tag>)
+ * It handles URLs (as clickable links) and hashtags (highlighted text — no /t route here)
  * without the heavier embed/image/mention logic of NoteContent.
  */
 export function BioContent({ children, tags, className }: BioContentProps) {
@@ -151,15 +150,11 @@ export function BioContent({ children, tags, className }: BioContentProps) {
               </a>
             );
           case 'hashtag':
+            // No hashtag feed route in this app — render as highlighted text.
             return (
-              <Link
-                key={i}
-                to={`/t/${token.tag}`}
-                className="text-primary hover:underline"
-                onClick={(e) => e.stopPropagation()}
-              >
+              <span key={i} className="text-primary">
                 {token.raw}
-              </Link>
+              </span>
             );
         }
       })}
