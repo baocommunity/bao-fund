@@ -45,7 +45,7 @@ export interface SidebarItemDef {
 export const SIDEBAR_ITEMS: SidebarItemDef[] = [
   {
     id: "chat",
-    label: "₿AO CHAT",
+    label: "₿AOs",
     path: "/chat",
     icon: MessageSquareMore,
     requiresAuth: true,
