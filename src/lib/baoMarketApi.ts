@@ -16,16 +16,15 @@ import { type BaoMarket, BAO_MARKET_KIND } from '@/lib/baoMarketParser';
 export const BAO_PUBLIC_API_BASE = 'https://relay.bao.network/bao-api/v1';
 
 /**
- * Primary API base. Dev talks to the local bao.markets API directly (the
- * demo/signet markets the ₿AO Fund e2e scripts create only exist there);
- * production uses the same-origin proxied path.
+ * Primary API base. There is no local API: dev and deployed builds alike talk
+ * to the public bao.markets API. Deployed builds try the same-origin proxy
+ * first and fall back to the public host inside baoApiFetch; the env var
+ * remains as an explicit override.
  */
 function baoPrimaryApiBase(): string {
   const fromEnv = (import.meta.env.VITE_BAO_FUNDRAISING_API_URL as string | undefined)?.replace(/\/+$/, '');
   if (fromEnv) return `${fromEnv}/v1`;
-  // Plain-http localhost is a dev convenience only — production CSP blocks
-  // it, so deployed builds use the same-origin proxy path.
-  if (import.meta.env.DEV) return 'http://localhost:3462/v1';
+  if (import.meta.env.DEV) return BAO_PUBLIC_API_BASE;
   return '/bao-api/v1';
 }
 

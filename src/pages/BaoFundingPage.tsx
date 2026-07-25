@@ -1,16 +1,17 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bot, ChevronDown, ChevronUp, CircleDollarSign, HandCoins, Loader2, Plus, Search, Sparkles, User, Users, Waves, X } from 'lucide-react';
+import { Bot, ChevronDown, ChevronUp, CircleDollarSign, ExternalLink, HandCoins, Loader2, Plus, Search, Sparkles, User, Users, Waves, X } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 
 import { ComputeCreditsTab } from '@/components/bao-fund/ComputeCreditsTab';
 import { CreateCampaignDialog } from '@/components/bao-fund/CreateCampaignDialog';
+import { FundraiserContributions } from '@/components/bao-fund/FundraiserContributions';
 import { MilestoneMarketWidget } from '@/components/bao-fund/MilestoneMarketWidget';
 import { StreamBar } from '@/components/bao-fund/StreamBar';
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -25,6 +26,7 @@ import {
   BAO_RAILS,
   BAO_RAIL_LABELS,
   baoApiBase,
+  baoMarketsWebBase,
   claimStream,
   contributeToFundraiser,
   fetchContributions,
@@ -34,6 +36,7 @@ import {
   type BaoFundraiser,
   type BaoRail,
 } from '@/lib/baoFundraising';
+import { appProfileUrl } from '@/lib/dittoUrl';
 import { genUserName } from '@/lib/genUserName';
 import { BAO_CATEGORIES, baoCategoryId, baoCategoryLabel } from '@/lib/baoCategories';
 import { cn } from '@/lib/utils';
@@ -202,14 +205,15 @@ export function BaoFundingPage() {
           <TabsTrigger value="campaigns" className="flex-1">Campaigns</TabsTrigger>
           <TabsTrigger value="compute" className="flex-1 gap-1.5">
             Compute credits
-            <Badge variant="outline" className="text-[10px] px-1 py-0 text-green-500 border-green-500/40">REAL</Badge>
+            {/* Theme-aware token: Tailwind dark: follows the OS, not the app theme */}
+            <Badge variant="outline" className="text-[10px] px-1 py-0 text-[var(--2140-success)] border-[var(--2140-success)]">REAL</Badge>
           </TabsTrigger>
         </TabsList>
 
         <TabsContent value="campaigns" className="space-y-4 mt-4">
           {/* DEMO banner — scoped to the Campaigns tab */}
           <div className="rounded-lg border-2 border-dashed border-amber-500/70 bg-amber-500/10 px-4 py-3 text-sm">
-            <p className="font-semibold text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+            <p className="font-semibold text-[var(--2140-warning)] flex items-center gap-1.5">
               <Sparkles className="size-4" /> DEMO — signet, no real money
             </p>
             <p className="text-muted-foreground mt-0.5">
@@ -308,7 +312,7 @@ export function BaoFundingPage() {
             <Card>
               <CardContent className="py-8 text-center text-sm text-muted-foreground">
                 Can't reach the bao.markets API at <code className="text-xs">{baoApiBase()}</code>.
-                Start it locally (packages/api, port 3462) or set <code className="text-xs">VITE_BAO_FUNDRAISING_API_URL</code>.
+                Check your connection, or set <code className="text-xs">VITE_BAO_FUNDRAISING_API_URL</code> to override the endpoint.
               </CardContent>
             </Card>
           ) : fundraisers.length === 0 ? (
@@ -383,6 +387,7 @@ function CampaignCard({ fundraiser: f, expanded, onToggle, detail, detailLoading
   const author = useAuthor(f.owner_pubkey);
   const metadata = author.data?.metadata;
   const displayName = metadata?.name ?? genUserName(f.owner_pubkey);
+  const ownerProfileUrl = appProfileUrl(f.owner_pubkey);
   const pct = Math.min(100, Math.round((Number(f.raised_sats) / Number(f.goal_sats)) * 100));
   const format = f.format ?? 'milestones';
 
@@ -395,21 +400,40 @@ function CampaignCard({ fundraiser: f, expanded, onToggle, detail, detailLoading
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <CardTitle className="text-base truncate">{f.title}</CardTitle>
-            <CardDescription className="mt-1 flex items-center gap-2 flex-wrap">
-              <span className="flex items-center gap-1.5 text-xs">
-                <Avatar className="size-4">
-                  <AvatarImage src={metadata?.picture} alt={displayName} />
-                  <AvatarFallback className="text-[8px]">{displayName.slice(0, 2).toUpperCase()}</AvatarFallback>
-                </Avatar>
-                {displayName}
-              </span>
+            {/* div, not CardDescription (<p>): Badge renders a <div>, and a
+                <div> inside <p> is invalid HTML that React logs as a nesting error. */}
+            <div className="text-sm text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
+              {ownerProfileUrl ? (
+                <a
+                  href={ownerProfileUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  onClick={(e) => e.stopPropagation()}
+                  className="flex items-center gap-1.5 text-xs hover:text-primary transition-colors"
+                  title="View owner profile on 2140.wtf"
+                >
+                  <Avatar className="size-4">
+                    <AvatarImage src={metadata?.picture} alt={displayName} />
+                    <AvatarFallback className="text-[8px]">{displayName.slice(0, 2).toUpperCase()}</AvatarFallback>
+                  </Avatar>
+                  {displayName}
+                </a>
+              ) : (
+                <span className="flex items-center gap-1.5 text-xs">
+                  <Avatar className="size-4">
+                    <AvatarImage src={metadata?.picture} alt={displayName} />
+                    <AvatarFallback className="text-[8px]">{displayName.slice(0, 2).toUpperCase()}</AvatarFallback>
+                  </Avatar>
+                  {displayName}
+                </span>
+              )}
               <RunnerBadge type={f.runner_type} />
               {format === 'stream' && (
                 <Badge variant="secondary" className="gap-1"><Waves className="size-3" /> Stream</Badge>
               )}
               <Badge variant={f.status === 'open' ? 'outline' : 'default'} className="capitalize">{f.status}</Badge>
               {f.category && <Badge variant="outline">{baoCategoryLabel(f.category)}</Badge>}
-            </CardDescription>
+            </div>
           </div>
           <div className="text-right shrink-0">
             <div className="text-sm font-semibold tabular-nums">{formatSats(Number(f.raised_sats))} / {formatSats(Number(f.goal_sats))} sats</div>
@@ -479,11 +503,64 @@ function CampaignCard({ fundraiser: f, expanded, onToggle, detail, detailLoading
                   <p className="text-xs text-center text-muted-foreground">Log in to contribute.</p>
                 )
               )}
+
+              <Separator />
+
+              <FundraiserContributions fundraiserId={f.id} />
+
+              <Separator />
+
+              <CampaignLinks fundraiserId={f.id} format={format} />
             </>
           ) : null}
         </CardContent>
       )}
     </Card>
+  );
+}
+
+// ── Off-platform links ───────────────────────────────────────────────────────
+
+/**
+ * Raw API JSON (always available — agents and debugging) plus a bao.markets
+ * web link when the active API is the production one. Local demo campaigns
+ * exist only in this machine's database, so the bao.markets link is replaced
+ * by an explicit note instead of a link that would 404.
+ */
+function CampaignLinks({ fundraiserId, format }: { fundraiserId: string; format: string }) {
+  const webBase = baoMarketsWebBase();
+  const apiUrl = `${baoApiBase()}/v1/fundraisers/${encodeURIComponent(fundraiserId)}`;
+
+  return (
+    <div className="flex items-center gap-4 flex-wrap text-xs">
+      <a
+        href={apiUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center gap-1 text-muted-foreground hover:text-primary transition-colors"
+        title="Raw fundraiser JSON from the bao.markets API"
+      >
+        <ExternalLink className="size-3" /> API data
+      </a>
+      {webBase ? (
+        format === 'stream' ? (
+          <a
+            href={`${webBase}/demo/markets`}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-1 text-muted-foreground hover:text-primary transition-colors"
+          >
+            <ExternalLink className="size-3" /> bao.markets
+          </a>
+        ) : (
+          <span className="text-muted-foreground">Milestone markets open from each milestone above.</span>
+        )
+      ) : (
+        <span className="text-muted-foreground italic">
+          Local demo — this campaign only exists on this machine, not on bao.markets.
+        </span>
+      )}
+    </div>
   );
 }
 
@@ -499,13 +576,28 @@ function ContributeDialog({ fundraiser, onOpenChange, onContributed }: {
   const [amount, setAmount] = useState('1000');
   const [rail, setRail] = useState<BaoRail>('lightning');
   const [instructions, setInstructions] = useState<Record<string, unknown> | null>(null);
+  // Stable idempotency key per dialog session: a retry after a network
+  // timeout (or an accidental double submit) replays server-side instead of
+  // recording the contribution twice. Regenerated when the dialog closes.
+  const idemKeyRef = useRef<string | null>(null);
 
   const mutation = useMutation({
-    mutationFn: () => contributeToFundraiser(user!.signer, fundraiser!.id, {
-      amount_sats: parseInt(amount, 10) || 0,
-      rail,
-    }),
+    mutationFn: () => {
+      if (!idemKeyRef.current) idemKeyRef.current = crypto.randomUUID();
+      return contributeToFundraiser(user!.signer, fundraiser!.id, {
+        amount_sats: parseInt(amount, 10) || 0,
+        rail,
+        idempotencyKey: `2140:${fundraiser!.id}:${rail}:${parseInt(amount, 10) || 0}:${idemKeyRef.current}`,
+      });
+    },
     onSuccess: (data) => {
+      if (data.replayed) {
+        // Replay responses omit payment_instructions — setting them would
+        // blank the dialog back to the funding form after a success toast.
+        toast({ title: 'Contribution already recorded (DEMO)' });
+        onContributed();
+        return;
+      }
       setInstructions(data.payment_instructions as Record<string, unknown>);
       toast({ title: 'Contribution recorded (DEMO)' });
       onContributed();
@@ -514,7 +606,7 @@ function ContributeDialog({ fundraiser, onOpenChange, onContributed }: {
   });
 
   const close = (open: boolean) => {
-    if (!open) { setInstructions(null); setAmount('1000'); }
+    if (!open) { setInstructions(null); setAmount('1000'); idemKeyRef.current = null; }
     onOpenChange(open);
   };
 

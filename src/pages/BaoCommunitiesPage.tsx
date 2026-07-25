@@ -1,15 +1,18 @@
-import { Hash, Loader2, Lock, MessagesSquare, Plus, ShieldCheck } from "lucide-react";
+import { ChevronDown, Hash, Loader2, Lock, MessagesSquare, Plus, ShieldCheck } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useSeoMeta } from "@unhead/react";
 
 import { JoinButton } from "@/components/auth/JoinButton";
 import { PageHeader } from "@/components/PageHeader";
+import { RelayListEditor } from "@/components/RelayListEditor";
+import { FundImportPicker, FundThreadSetup } from "@/components/bao-fund/ImportFundThread";
 import { Button } from "@/components/ui/button";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ChromeDialogContent, Dialog } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useCommunityActions2 } from "@/concord-v2/hooks/useCommunityActions2";
+import { useCommunityActions2, useCreateRelayCandidates2 } from "@/concord-v2/hooks/useCommunityActions2";
 import { useCommunity2, useLiveCommunities2, useIsExcluded2 } from "@/concord-v2/hooks/useCommunityList2";
 import { useChannels2, useControlFold2 } from "@/concord-v2/hooks/useControlPlane2";
 import { useConcord2Unread } from "@/concord-v2/hooks/useConcord2Unread";
@@ -94,19 +97,38 @@ function CommunityRow({ entry }: { entry: CommunityListEntry }) {
 /** Minimal create-community dialog: a name, then straight into the community. */
 function CreateCommunityDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const [name, setName] = useState("");
+  const [fundId, setFundId] = useState("");
   const [busy, setBusy] = useState(false);
+  // Set once the community exists and a fund import is in progress: keeps the
+  // dialog open while FundThreadSetup creates the fund channel + posts.
+  const [setup, setSetup] = useState<{ communityId: string; fundraiserId: string } | null>(null);
   const { create } = useCommunityActions2();
   const navigate = useNavigate();
+
+  // Advanced: which relays the community is minted on. `null` = untouched (the
+  // create path picks its own default — app relays ∪ the creator's DM relays);
+  // once the user edits, `relays` holds the explicit set. The candidate query
+  // (gated on the menu being open) resolves the same default for pre-selection.
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [relays, setRelays] = useState<string[] | null>(null);
+  const { data: candidates } = useCreateRelayCandidates2(advancedOpen);
+  const effectiveRelays = relays ?? candidates ?? [];
 
   const handleCreate = async () => {
     const trimmed = name.trim();
     if (!trimmed) return;
     setBusy(true);
     try {
-      const { communityId, name: createdName } = await create({ name: trimmed });
+      const { communityId, name: createdName } = await create({ name: trimmed, relays: relays ?? undefined });
+      if (fundId) {
+        // Hand off to FundThreadSetup below; it toasts + navigates via onDone.
+        setSetup({ communityId, fundraiserId: fundId });
+        return;
+      }
       toast({ title: "Community created", description: createdName });
       onOpenChange(false);
       setName("");
+      setRelays(null);
       navigate(`/c/${encodeURIComponent(communityId)}`);
     } catch (e) {
       toast({
@@ -117,6 +139,24 @@ function CreateCommunityDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     } finally {
       setBusy(false);
     }
+  };
+
+  const handleSetupDone = (communityId: string) => (ok: boolean) => {
+    toast(
+      ok
+        ? { title: "Community created with fund thread", description: name.trim() }
+        : {
+            title: "Community created — fund thread incomplete",
+            description: "The community is ready; the fund import only partially posted.",
+            variant: "destructive",
+          },
+    );
+    onOpenChange(false);
+    setName("");
+    setFundId("");
+    setRelays(null);
+    setSetup(null);
+    navigate(`/c/${encodeURIComponent(communityId)}`);
   };
 
   return (
@@ -130,6 +170,13 @@ function CreateCommunityDialog({ open, onOpenChange }: { open: boolean; onOpenCh
           <p className="text-sm text-muted-foreground">
             End-to-end encrypted. Only members can read it — not even the relays.
           </p>
+          {setup ? (
+            <FundThreadSetup
+              communityId={setup.communityId}
+              fundraiserId={setup.fundraiserId}
+              onDone={handleSetupDone(setup.communityId)}
+            />
+          ) : (
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -144,15 +191,43 @@ function CreateCommunityDialog({ open, onOpenChange }: { open: boolean; onOpenCh
               maxLength={80}
               autoFocus
             />
-            <div className="flex justify-end gap-2">
-              <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
-                Cancel
-              </Button>
-              <Button type="submit" disabled={busy || !name.trim()}>
-                {busy ? <Loader2 className="size-4 animate-spin" /> : "Create"}
-              </Button>
-            </div>
+            <FundImportPicker value={fundId} onChange={setFundId} />
+            <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
+              <div className="flex justify-end gap-2">
+                <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
+                  Cancel
+                </Button>
+                <Button type="submit" disabled={busy || !name.trim() || effectiveRelays.length === 0}>
+                  {busy ? <Loader2 className="size-4 animate-spin" /> : "Create"}
+                </Button>
+                <CollapsibleTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon"
+                    aria-label="Choose relays"
+                    disabled={busy}
+                  >
+                    <ChevronDown className={cn("size-5 transition-transform", advancedOpen && "rotate-180")} />
+                  </Button>
+                </CollapsibleTrigger>
+              </div>
+              <CollapsibleContent className="overflow-hidden data-[state=closed]:animate-collapsible-up data-[state=open]:animate-collapsible-down">
+                <p className="mb-2 mt-3 text-xs text-muted-foreground">
+                  Where this community lives. Members read and write here, so pick
+                  relays that accept your writes. An auth-only or DM-only relay can
+                  reject the genesis and strand the create.
+                </p>
+                <RelayListEditor
+                  relays={effectiveRelays}
+                  onChange={setRelays}
+                  onReset={candidates ? () => setRelays(candidates) : undefined}
+                  emptyText="Add at least one relay to host this community."
+                />
+              </CollapsibleContent>
+            </Collapsible>
           </form>
+          )}
         </div>
       </ChromeDialogContent>
     </Dialog>
@@ -166,7 +241,7 @@ function CreateCommunityDialog({ open, onOpenChange }: { open: boolean; onOpenCh
  * channel sidebar lives inside the community page.
  */
 export function BaoCommunitiesPage() {
-  useSeoMeta({ title: "₿AO CHAT — 2140.wtf" });
+  useSeoMeta({ title: "₿AO CHAT — ₿AO Fund" });
   const { user } = useCurrentUser();
   const entries = useLiveCommunities2();
   const [createOpen, setCreateOpen] = useState(false);
