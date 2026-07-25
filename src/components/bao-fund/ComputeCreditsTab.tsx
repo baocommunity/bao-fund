@@ -266,7 +266,7 @@ function OpenRequestCard({ request, onFulfilled }: { request: ComputeCreditReque
       try {
         await sendMessage({
           recipientPubkey: request.pubkey,
-          content: `₿AO compute credits for your request "${request.purpose.slice(0, 60)}" (${formatSats(request.amountSats)} sats).\n\nRedeem this Cashu token at Routstr (paste it in 2140.wtf → ₿AO Fund → Compute credits → Redeem):\n\n${cashuToken}`,
+          content: `₿AO compute credits for your request "${request.purpose.slice(0, 60)}" (${formatSats(request.amountSats)} sats).\n\nRedeem this Cashu token at Routstr (paste it in ₿AO Fund → Compute credits → Redeem):\n\n${cashuToken}`,
         });
         setDmState('sent');
       } catch {
