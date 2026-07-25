@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Bot, CircleDollarSign, HandCoins, Loader2, Plus, Sparkles, User, Users, Waves } from 'lucide-react';
+import { Bot, ChevronDown, ChevronUp, CircleDollarSign, HandCoins, Loader2, Plus, Search, Sparkles, User, Users, Waves, X } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 
 import { ComputeCreditsTab } from '@/components/bao-fund/ComputeCreditsTab';
@@ -27,6 +27,7 @@ import {
   baoApiBase,
   claimStream,
   contributeToFundraiser,
+  fetchContributions,
   fetchFundraiser,
   fetchFundraisers,
   releaseMilestone,
@@ -34,6 +35,7 @@ import {
   type BaoRail,
 } from '@/lib/baoFundraising';
 import { genUserName } from '@/lib/genUserName';
+import { BAO_CATEGORIES, baoCategoryId, baoCategoryLabel } from '@/lib/baoCategories';
 import { cn } from '@/lib/utils';
 
 function formatSats(n: number): string {
@@ -50,11 +52,21 @@ function RunnerBadge({ type }: { type: BaoFundraiser['runner_type'] }) {
   return <Badge variant="secondary" className="gap-1"><User className="size-3" /> Human</Badge>;
 }
 
-const CATEGORY_FILTERS = [
-  { id: 'all', label: 'All' },
-  { id: 'infra', label: 'Infra' },
-  { id: 'tools', label: 'Tools' },
-  { id: 'baos', label: '₿AOs' },
+const CATEGORY_FILTERS = [{ id: 'all', label: 'All' }, ...BAO_CATEGORIES];
+
+const RUNNER_FILTERS = [
+  { id: 'all', label: 'Any runner' },
+  { id: 'agent', label: 'Agent' },
+  { id: 'agent_human', label: 'Agent + Human' },
+  { id: 'human', label: 'Human' },
+] as const;
+
+const STATUS_FILTERS = [
+  { id: 'all', label: 'All statuses' },
+  { id: 'open', label: 'Open' },
+  { id: 'funded', label: 'Funded' },
+  { id: 'completed', label: 'Completed' },
+  { id: 'cancelled', label: 'Cancelled' },
 ] as const;
 
 /**
@@ -73,6 +85,10 @@ export function BaoFundingPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [contributeTarget, setContributeTarget] = useState<BaoFundraiser | null>(null);
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [runnerFilter, setRunnerFilter] = useState<string>('all');
+  const [funderFilter, setFunderFilter] = useState<'all' | 'mine' | 'funded'>('all');
+  const [search, setSearch] = useState('');
   const [searchParams] = useSearchParams();
 
   // Deep links (e.g. from a pet's upkeep card):
@@ -123,9 +139,43 @@ export function BaoFundingPage() {
   });
 
   const allFundraisers = listQuery.data ?? [];
-  const fundraisers = categoryFilter === 'all'
-    ? allFundraisers
-    : allFundraisers.filter((f) => (f.category === 'daos' ? 'baos' : (f.category ?? 'tools')) === categoryFilter);
+
+  // "I funded": no API-side contributor listing exists yet, so fetch each
+  // campaign's contributions and keep the ids where the user appears. Only
+  // runs while the filter is active. (TODO: replace with ?contributor= on
+  // the bao.markets list endpoint once it exists — this is N+1 by design.)
+  const fundedByMeQuery = useQuery({
+    queryKey: ['bao-funded-by-me', user?.pubkey, allFundraisers.map((f) => f.id).join(',')],
+    queryFn: async () => {
+      const ids = await Promise.all(
+        allFundraisers.map(async (f) => {
+          try {
+            const contributions = await fetchContributions(f.id);
+            return contributions.some((c) => c.contributor_pubkey === user!.pubkey) ? f.id : null;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      return new Set(ids.filter((id): id is string => id !== null));
+    },
+    enabled: !!user && funderFilter === 'funded' && allFundraisers.length > 0,
+    staleTime: 30_000,
+  });
+
+  const query = search.trim().toLowerCase();
+  const fundraisers = allFundraisers
+    .filter((f) => categoryFilter === 'all' || baoCategoryId(f.category) === categoryFilter)
+    .filter((f) => statusFilter === 'all' || f.status === statusFilter)
+    .filter((f) => runnerFilter === 'all' || f.runner_type === runnerFilter)
+    .filter((f) => {
+      if (funderFilter === 'mine') return f.owner_pubkey === user?.pubkey;
+      if (funderFilter === 'funded') return fundedByMeQuery.data?.has(f.id) ?? false;
+      return true;
+    })
+    .filter((f) => !query
+      || f.title.toLowerCase().includes(query)
+      || (f.description ?? '').toLowerCase().includes(query));
   const detail = detailQuery.data;
   const isOwner = !!user && !!detail && detail.fundraiser.owner_pubkey === user.pubkey;
 
@@ -167,6 +217,27 @@ export function BaoFundingPage() {
             </p>
           </div>
 
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-muted-foreground pointer-events-none" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search campaigns…"
+              className="pl-9 pr-9"
+              aria-label="Search campaigns"
+            />
+            {search && (
+              <button
+                type="button"
+                onClick={() => setSearch('')}
+                aria-label="Clear search"
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="size-4" />
+              </button>
+            )}
+          </div>
+
           <div className="flex items-center gap-1.5 flex-wrap">
             {CATEGORY_FILTERS.map((c) => (
               <Button
@@ -179,6 +250,54 @@ export function BaoFundingPage() {
                 {c.label}
               </Button>
             ))}
+          </div>
+
+          <div className="flex items-center gap-1.5 flex-wrap">
+            {STATUS_FILTERS.map((s) => (
+              <Button
+                key={s.id}
+                size="sm"
+                variant={statusFilter === s.id ? 'default' : 'outline'}
+                className="h-7 text-xs"
+                onClick={() => setStatusFilter(s.id)}
+              >
+                {s.label}
+              </Button>
+            ))}
+            <span className="mx-1 h-4 w-px bg-border" aria-hidden />
+            {RUNNER_FILTERS.map((r) => (
+              <Button
+                key={r.id}
+                size="sm"
+                variant={runnerFilter === r.id ? 'default' : 'outline'}
+                className="h-7 text-xs"
+                onClick={() => setRunnerFilter(r.id)}
+              >
+                {r.label}
+              </Button>
+            ))}
+            {user && (
+              <>
+                <span className="mx-1 h-4 w-px bg-border" aria-hidden />
+                <Button
+                  size="sm"
+                  variant={funderFilter === 'mine' ? 'default' : 'outline'}
+                  className="h-7 text-xs"
+                  onClick={() => setFunderFilter(funderFilter === 'mine' ? 'all' : 'mine')}
+                >
+                  My raises
+                </Button>
+                <Button
+                  size="sm"
+                  variant={funderFilter === 'funded' ? 'default' : 'outline'}
+                  className="h-7 text-xs gap-1"
+                  onClick={() => setFunderFilter(funderFilter === 'funded' ? 'all' : 'funded')}
+                >
+                  {funderFilter === 'funded' && fundedByMeQuery.isLoading && <Loader2 className="size-3 animate-spin" />}
+                  I funded
+                </Button>
+              </>
+            )}
           </div>
 
           {listQuery.isLoading ? (
@@ -197,7 +316,9 @@ export function BaoFundingPage() {
               <CardContent className="py-8 text-center text-sm text-muted-foreground">
                 {allFundraisers.length === 0
                   ? `No fundraising campaigns yet.${user ? ' Start the first one!' : ' Log in to start one.'}`
-                  : 'No campaigns in this category.'}
+                  : query
+                    ? `No campaigns match "${search.trim()}".`
+                    : 'No campaigns match these filters.'}
               </CardContent>
             </Card>
           ) : (
@@ -287,7 +408,7 @@ function CampaignCard({ fundraiser: f, expanded, onToggle, detail, detailLoading
                 <Badge variant="secondary" className="gap-1"><Waves className="size-3" /> Stream</Badge>
               )}
               <Badge variant={f.status === 'open' ? 'outline' : 'default'} className="capitalize">{f.status}</Badge>
-              {f.category && <Badge variant="outline" className="capitalize">{f.category === 'daos' || f.category === 'baos' ? '₿AOs' : f.category}</Badge>}
+              {f.category && <Badge variant="outline">{baoCategoryLabel(f.category)}</Badge>}
             </CardDescription>
           </div>
           <div className="text-right shrink-0">
@@ -295,7 +416,13 @@ function CampaignCard({ fundraiser: f, expanded, onToggle, detail, detailLoading
             <div className="text-xs text-muted-foreground">{pct}% funded</div>
           </div>
         </div>
+        {f.description && !expanded && (
+          <p className="text-sm text-muted-foreground line-clamp-2 mt-2">{f.description}</p>
+        )}
         <Progress value={pct} className="h-2 mt-2" />
+        <div className="flex items-center justify-center gap-1 pt-1.5 text-[11px] text-muted-foreground">
+          {expanded ? (<>Show less <ChevronUp className="size-3.5" /></>) : (<>Read more <ChevronDown className="size-3.5" /></>)}
+        </div>
       </CardHeader>
 
       {expanded && (
