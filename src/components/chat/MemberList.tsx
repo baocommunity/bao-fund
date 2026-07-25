@@ -1,10 +1,10 @@
 import { AtSign, Ban, Bot, ChevronDown, Copy, Crown, IdCard, MessageSquareText, MoreVertical, Music, PawPrint, Shield, ShieldOff, Smile, UserMinus, X } from "lucide-react";
 
 import { useMemo, useState } from "react";
-import { Link } from "react-router-dom";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { BotPill } from "@/components/BotPill";
+import { PetProfileDialog } from "@/components/chat/PetProfileDialog";
 import { ProfilePreviewCard } from "@/components/chat/ProfilePreviewCard";
 import { StatusDialog } from "@/components/dialogs/StatusDialog";
 import { Button } from "@/components/ui/button";
@@ -152,6 +152,8 @@ function MemberRow({
   // Hide a music status whose NIP-40 expiration has passed (track ended).
   const musicStatus = isStatusExpired(rawMusicStatus) ? undefined : rawMusicStatus;
   const [statusOpen, setStatusOpen] = useState(false);
+  // Pet profile dialog (pet-centric view of a pet-bodied agent).
+  const [petProfileOpen, setPetProfileOpen] = useState(false);
 
   const roleSet = new Set((roles ?? []).map((r) => r.toLowerCase()));
   const isOwner = roleSet.has(ROLE_OWNER);
@@ -387,16 +389,17 @@ function MemberRow({
       {badge && <WotTrustDot badge={badge} />}
       {petBody && (
         // Quiet pet-body marker: paw icon only, pet name in the tooltip,
-        // linking to the Pets page where the pet's upkeep fundraiser lives.
+        // opening the pet profile dialog (the pet-centric view of this agent).
         <Tooltip>
           <TooltipTrigger asChild>
-            <Link
-              to="/pets"
+            <button
+              type="button"
+              onClick={() => setPetProfileOpen(true)}
               aria-label={`${petBody.name} — pet body`}
               className="shrink-0 inline-flex items-center rounded-full bg-primary/15 p-1 text-primary transition-colors hover:bg-primary/25 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
               <PawPrint className="size-3" aria-hidden />
-            </Link>
+            </button>
           </TooltipTrigger>
           <TooltipContent>{petBody.name} — this agent's pet body</TooltipContent>
         </Tooltip>
@@ -431,6 +434,15 @@ function MemberRow({
     </ContextMenuContent>
     </ContextMenu>
     {isSelf && <StatusDialog open={statusOpen} onOpenChange={setStatusOpen} />}
+    {petBody && (
+      <PetProfileDialog
+        petBody={petBody}
+        open={petProfileOpen}
+        onOpenChange={setPetProfileOpen}
+        onMention={(pk) => requestMention(pk)}
+        onMessage={!isSelf && onMessage ? onMessage : undefined}
+      />
+    )}
     </>
   );
 }

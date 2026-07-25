@@ -1,8 +1,8 @@
 import { Loader2, PawPrint, Reply } from "lucide-react";
-import { memo } from "react";
-import { Link } from "react-router-dom";
+import { memo, useState } from "react";
 
 import { ProfilePreviewCard } from "@/components/chat/ProfilePreviewCard";
+import { PetProfileDialog } from "@/components/chat/PetProfileDialog";
 import { BotPill } from "@/components/BotPill";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -121,6 +121,8 @@ export const MessageRow = memo(function MessageRow({
   // Pet bodies only apply to real Nostr authors (mesh peers carry an explicit
   // identity, and there's no pet behind a mesh peer id).
   const pet = identityOverride ? undefined : petBody;
+  // Pet profile dialog (pet-centric view of a pet-bodied agent).
+  const [petProfileOpen, setPetProfileOpen] = useState(false);
 
   // Swipe-to-reply: only active when `onSwipeReply` is set (touch devices).
   const swipe = useSwipeToReply(
@@ -191,11 +193,14 @@ export const MessageRow = memo(function MessageRow({
       ) : identityOverride ? (
         <span className="shrink-0 mt-0.5">{avatar}</span>
       ) : pet ? (
-        // Agent with a pet body: the pet's avatar, linked to the Pets page
-        // (where the pet's upkeep fundraiser lives) instead of the profile card.
-        <Link
-          to="/pets"
-          title={`${pet.name} — this agent's pet body. View its upkeep fundraiser.`}
+        // Agent with a pet body: the pet's avatar opens the pet profile
+        // dialog (the pet-centric view of this agent) instead of the plain
+        // profile card.
+        <button
+          type="button"
+          onClick={() => setPetProfileOpen(true)}
+          title={`${pet.name} — this agent's pet body. View its profile.`}
+          aria-label={`${pet.name} — pet body`}
           className="shrink-0 mt-0.5 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <Avatar className="size-10 transition-opacity hover:opacity-90">
@@ -207,7 +212,7 @@ export const MessageRow = memo(function MessageRow({
               <PawPrint className="size-5" aria-hidden />
             </AvatarFallback>
           </Avatar>
-        </Link>
+        </button>
       ) : (
         <ProfilePreviewCard pubkey={pubkey}>
           <button type="button" className="shrink-0 mt-0.5 rounded-full focus:outline-none focus-visible:ring-2 focus-visible:ring-ring">
@@ -236,11 +241,13 @@ export const MessageRow = memo(function MessageRow({
                 )}
               </span>
             ) : pet ? (
-              // Agent with a pet body: the pet's name + a paw badge, linked to
-              // the Pets page where its upkeep fundraiser renders.
-              <Link
-                to="/pets"
-                title={`${pet.name} — this agent's pet body. View its upkeep fundraiser.`}
+              // Agent with a pet body: the pet's name + a paw badge, opening
+              // the pet profile dialog.
+              <button
+                type="button"
+                onClick={() => setPetProfileOpen(true)}
+                title={`${pet.name} — this agent's pet body. View its profile.`}
+                aria-label={`${pet.name} — pet body`}
                 className="text-[15px] font-semibold text-primary min-w-0 inline-flex items-center gap-1.5 hover:underline focus:outline-none"
               >
                 <span className="truncate">{pet.name}</span>
@@ -248,7 +255,7 @@ export const MessageRow = memo(function MessageRow({
                   <PawPrint className="size-3" aria-hidden />
                   Pet
                 </span>
-              </Link>
+              </button>
             ) : (
               <ProfilePreviewCard pubkey={pubkey}>
                 <button
@@ -323,6 +330,13 @@ export const MessageRow = memo(function MessageRow({
         {afterBody}
       </div>
       </div>
+      {pet && (
+        <PetProfileDialog
+          petBody={pet}
+          open={petProfileOpen}
+          onOpenChange={setPetProfileOpen}
+        />
+      )}
     </div>
   );
 });
