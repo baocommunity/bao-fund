@@ -83,3 +83,9 @@ services/escrow-operator/dist/
 
 # Grant proposal experiment (local only, not for public repo)
 grant-proposal-experiment/
+.gstack/
+
+# Local dev/e2e artifacts at repo root (may contain throwaway keys; never commit)
+/pets-group-demo.txt
+/bao-api-handoff.md
+/*.cjs
