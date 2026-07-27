@@ -38,6 +38,10 @@ jobs:
           cache: npm
 
       - name: Install dependencies and build
+        env:
+          # Pets battle escrow operator pubkey (public value — configure under
+          # repo Settings → Secrets and variables → Actions → Variables).
+          VITE_PETS_BATTLE_ESCROW_PUBKEY: ${{ vars.VITE_PETS_BATTLE_ESCROW_PUBKEY }}
         run: |
           npm install
           npm run build

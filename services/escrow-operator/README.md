@@ -51,18 +51,29 @@ npm run dev
 
 The server will start on `http://localhost:3000`.
 
-## Throwaway local key pair
+## Local key pair
 
-For local development only, you can use this throwaway key pair. **Never use it
-in production.**
+Generate a fresh throwaway key pair for local development. **Never commit a
+real key and never reuse a development key in production.**
 
-```text
-ESCROW_PRIVATE_KEY=8396c3de93a52121f4f7b24a7212f5d1ffafd1d2977cb21fbe10ee539e674854
-ESCROW_PUBKEY=2f3e35da15902d7ccb8d27ff77f29018008308953ba9d781ee6c3370e3273761
+```bash
+# Private key (keep it in your local .env only):
+openssl rand -hex 32
+
+# Derive the matching pubkey:
+node --input-type=module -e "
+import { getPublicKey } from 'nostr-tools';
+import { hexToBytes } from '@noble/curves/utils.js';
+console.log(getPublicKey(hexToBytes('<your-64-hex-private-key>')));
+"
 ```
 
-Set `petsBattleEscrowPubkey` to the pubkey above and `petsBattleEscrowServiceUrl`
-to `http://localhost:3000` in the frontend config.
+Set `petsBattleEscrowPubkey` to the derived pubkey and
+`petsBattleEscrowServiceUrl` to `http://localhost:3000` in the frontend config.
+
+> The production operator key lives ONLY in the deployment environment
+> (server-local `.env`). The frontend learns the production pubkey via the
+> `VITE_PETS_BATTLE_ESCROW_PUBKEY` GitHub Actions variable at build time.
 
 ## Tests
 
