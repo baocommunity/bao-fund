@@ -3,6 +3,10 @@ import { createRoot } from 'react-dom/client';
 // Import polyfills first (AbortSignal.any / AbortSignal.timeout).
 import './lib/polyfills.ts';
 
+// Second: put zod in jitless mode before any schema-defining module loads
+// (see ./lib/zodJitless.ts for why ordering matters).
+import './lib/zodJitless.ts';
+
 // Kick off cache hydration early so data is ready before components render.
 import { hydrateNip05Cache } from '@/lib/nip05Cache';
 hydrateNip05Cache();
@@ -20,6 +24,16 @@ import '@fontsource-variable/inter';
 // Uses a MutationObserver so it reacts to all subsequent theme changes
 // (class changes for builtin themes, style-content changes for custom themes).
 import { Capacitor, SystemBars, SystemBarsStyle } from '@capacitor/core';
+
+// ─── PWA service worker (browser only) ───────────────────────────────────────
+// Register /sw.js unconditionally so the app is installable (Chrome requires
+// an active SW with a fetch handler) even for users who never enable push
+// notifications — that hook registers the same worker lazily and dedupes.
+if ('serviceWorker' in navigator && !Capacitor.isNativePlatform()) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}
 import { getBackgroundThemeMode } from '@/lib/colorUtils';
 
 if (Capacitor.isNativePlatform()) {

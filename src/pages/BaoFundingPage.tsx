@@ -32,11 +32,13 @@ import {
   fetchContributions,
   fetchFundraiser,
   fetchFundraisers,
+  isBaoRailLive,
   releaseMilestone,
   type BaoFundraiser,
   type BaoRail,
 } from '@/lib/baoFundraising';
 import { appProfileUrl } from '@/lib/dittoUrl';
+import { openUrl } from '@/lib/downloadFile';
 import { genUserName } from '@/lib/genUserName';
 import { BAO_CATEGORIES, baoCategoryId, baoCategoryLabel } from '@/lib/baoCategories';
 import { cn } from '@/lib/utils';
@@ -214,11 +216,28 @@ export function BaoFundingPage() {
           {/* DEMO banner — scoped to the Campaigns tab */}
           <div className="rounded-lg border-2 border-dashed border-amber-500/70 bg-amber-500/10 px-4 py-3 text-sm">
             <p className="font-semibold text-[var(--2140-warning)] flex items-center gap-1.5">
-              <Sparkles className="size-4" /> DEMO — signet, no real money
+              <Sparkles className="size-4" /> DEMO — do NOT send real sats to campaigns or milestones
             </p>
             <p className="text-muted-foreground mt-0.5">
-              Campaigns and markets run on the bao.markets demo API (<code className="text-xs">{baoApiBase()}</code>) — contributions are recorded, not settled. The Compute credits tab uses real sats.
+              Every settlement rail is in demo: contributions are only RECORDED by the bao.markets demo API (<code className="text-xs">{baoApiBase()}</code>), never paid out. Any address or invoice shown here is a demo artifact — <span className="font-medium text-foreground">real sats sent to it are lost and cannot be recovered</span>. Zaps or tokens sent to campaign pubkeys do not fund milestones. The Compute credits tab is the only real-sats feature.
             </p>
+            <div className="mt-2 rounded-md bg-background/60 px-3 py-2">
+              <p className="font-medium text-[var(--2140-warning)]">How to get demo sats for testing</p>
+              <ol className="list-decimal pl-4 mt-1 space-y-0.5 text-muted-foreground text-xs">
+                <li>Creating a campaign or market is <span className="text-foreground font-medium">free</span> — no sats needed (anti-spam is rate limits, not fees).</li>
+                <li>
+                  To contribute or trade, claim <span className="text-foreground font-medium">21,400 free demo sats per rail every 24h</span>{baoMarketsWebBase() ? (
+                    <>
+                      {' '}on{' '}
+                      <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => openUrl(baoMarketsWebBase()!)}>
+                        bao.markets
+                      </button>
+                    </>
+                  ) : null}{' '}— open Wallet, pick a rail (Lightning, Cashu, or On-chain), tap Claim. Guest Nostr login, no signup.
+                </li>
+                <li>Come back here and contribute on the same rail — the demo ledger records it instantly.</li>
+              </ol>
+            </div>
           </div>
 
           <div className="relative">
@@ -618,15 +637,18 @@ function ContributeDialog({ fundraiser, onOpenChange, onContributed }: {
         <DialogHeader>
           <DialogTitle>Fund: {fundraiser?.title}</DialogTitle>
           <DialogDescription>
-            DEMO — the contribution is recorded by the API but no real payment is made.
+            DEMO — the contribution is only recorded by the API; no real payment is made or paid out.
             {fundraiser && ` ${formatSats(remaining)} sats to goal.`}
           </DialogDescription>
         </DialogHeader>
 
         {instructions ? (
           <div className="space-y-3">
-            <div className="rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-xs space-y-1">
-              <p className="font-semibold text-amber-600 dark:text-amber-400">Demo payment instructions ({String(instructions.kind)})</p>
+            <div className="rounded-md border-2 border-amber-500/70 bg-amber-500/10 p-3 text-xs space-y-1">
+              <p className="font-semibold text-amber-600 dark:text-amber-400">⚠️ DO NOT PAY — demo payment instructions ({String(instructions.kind)})</p>
+              <p className="text-muted-foreground">
+                This is what the settlement rail WILL return once it leaves demo. Real sats sent to it now are lost.
+              </p>
               {Object.entries(instructions).map(([k, v]) => (
                 <p key={k} className="break-all"><span className="text-muted-foreground">{k}:</span> {String(v)}</p>
               ))}
@@ -647,16 +669,30 @@ function ContributeDialog({ fundraiser, onOpenChange, onContributed }: {
                   <button
                     key={r}
                     type="button"
+                    disabled={!isBaoRailLive(r)}
                     onClick={() => setRail(r)}
                     className={cn(
                       'rounded-md border px-2 py-1.5 text-xs font-medium transition-colors',
                       rail === r ? 'border-primary bg-primary/10 text-primary' : 'text-muted-foreground hover:text-foreground',
+                      !isBaoRailLive(r) && 'opacity-40 cursor-not-allowed hover:text-muted-foreground',
                     )}
                   >
                     {BAO_RAIL_LABELS[r]}
+                    {!isBaoRailLive(r) && <span className="block text-[9px]">soon</span>}
                   </button>
                 ))}
               </div>
+              <p className="text-xs text-muted-foreground">
+                Need demo sats? Claim 21,400 free sats per rail every 24h{baoMarketsWebBase() ? (
+                  <>
+                    {' '}on{' '}
+                    <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => openUrl(baoMarketsWebBase()!)}>
+                      bao.markets
+                    </button>
+                  </>
+                ) : null}
+                {' '}(Wallet → Claim) — signet coins, no real value.
+              </p>
             </div>
 
             <Button

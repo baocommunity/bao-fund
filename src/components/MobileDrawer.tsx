@@ -6,6 +6,7 @@ import { getAvatarShape } from '@/lib/avatarShape';
 import { Sheet, SheetContent, SheetTitle } from '@/components/ui/sheet';
 import { SidebarNavList } from '@/components/SidebarNavItem';
 import { SidebarMoreMenu } from '@/components/SidebarMoreMenu';
+import { PwaInstallButton } from '@/components/PwaInstallButton';
 
 
 import { EmojifiedText } from '@/components/CustomEmoji';
@@ -231,6 +232,9 @@ export function MobileDrawer({ open, onOpenChange }: MobileDrawerProps) {
                   />
                 </div>
               </nav>
+
+              {/* Install as a home-screen app (PWA) — no store/APK needed */}
+              <PwaInstallButton onAction={handleClose} />
             </div>
           ) : (
             <div className="flex flex-col h-full relative">
@@ -261,11 +265,14 @@ export function MobileDrawer({ open, onOpenChange }: MobileDrawerProps) {
                 </div>
               </nav>
 
+              {/* Install as a home-screen app (PWA) — no store/APK needed */}
+              <PwaInstallButton onAction={handleClose} />
+
               {/* Join button for logged-out users */}
               <div className="px-4 py-3 safe-area-bottom">
                 <button
                   onClick={() => setLoginDialogOpen(true)}
-                  className="flex items-center justify-center gap-2 w-full h-11 rounded-full bg-[var(--2140-bitcoin)] text-black font-semibold hover:bg-[var(--2140-bitcoin-hover)] transition-colors"
+                  className="flex items-center justify-center gap-2 w-full h-11 rounded-full bg-[var(--2140-bitcoin)] text-[var(--2140-on-bitcoin)] font-semibold hover:bg-[var(--2140-bitcoin-hover)] transition-colors"
                 >
                   <UserPlus className="size-4" />
                   <span>Join</span>
