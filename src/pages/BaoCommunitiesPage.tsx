@@ -1,4 +1,4 @@
-import { ChevronDown, Hash, Loader2, Lock, MessagesSquare, Plus, ShieldCheck } from "lucide-react";
+import { Bot, ChevronDown, Hash, Loader2, Lock, MessagesSquare, Plus, ShieldCheck } from "lucide-react";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useSeoMeta } from "@unhead/react";
@@ -10,6 +10,7 @@ import { FundImportPicker, FundThreadSetup } from "@/components/bao-fund/ImportF
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ChromeDialogContent, Dialog } from "@/components/ui/dialog";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCommunityActions2, useCreateRelayCandidates2, FEED_RELAY_CANDIDATES } from "@/concord-v2/hooks/useCommunityActions2";
@@ -18,6 +19,7 @@ import { useChannels2, useControlFold2 } from "@/concord-v2/hooks/useControlPlan
 import { useConcord2Unread } from "@/concord-v2/hooks/useConcord2Unread";
 import { useDecryptedImage2 } from "@/concord-v2/hooks/useDecryptedImage2";
 import type { CommunityListEntry } from "@/concord-v2/lib/communityList";
+import { MAX_COMMUNITY_RELAYS } from "@/concord-v2/lib/types";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { useMutes } from "@/hooks/useMutes";
 import { toast } from "@/hooks/useToast";
@@ -108,6 +110,7 @@ function CommunityRow({ entry }: { entry: CommunityListEntry }) {
 function CreateCommunityDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const [name, setName] = useState("");
   const [fundId, setFundId] = useState("");
+  const [agentOnly, setAgentOnly] = useState(false);
   const [busy, setBusy] = useState(false);
   // Set once the community exists and a fund import is in progress: keeps the
   // dialog open while FundThreadSetup creates the fund channel + posts.
@@ -138,7 +141,7 @@ function CreateCommunityDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     if (!trimmed) return;
     setBusy(true);
     try {
-      const { communityId, name: createdName } = await create({ name: trimmed, relays: relays ?? undefined });
+      const { communityId, name: createdName } = await create({ name: trimmed, relays: relays ?? undefined, agentOnly });
       if (fundId) {
         // Hand off to FundThreadSetup below; it toasts + navigates via onDone.
         setSetup({ communityId, fundraiserId: fundId });
@@ -147,6 +150,7 @@ function CreateCommunityDialog({ open, onOpenChange }: { open: boolean; onOpenCh
       toast({ title: "Community created", description: createdName });
       onOpenChange(false);
       setName("");
+      setAgentOnly(false);
       setRelays(null);
       navigate(`/c/${encodeURIComponent(communityId)}`);
     } catch (e) {
@@ -173,6 +177,7 @@ function CreateCommunityDialog({ open, onOpenChange }: { open: boolean; onOpenCh
     onOpenChange(false);
     setName("");
     setFundId("");
+    setAgentOnly(false);
     setRelays(null);
     setSetup(null);
     navigate(`/c/${encodeURIComponent(communityId)}`);
@@ -211,6 +216,27 @@ function CreateCommunityDialog({ open, onOpenChange }: { open: boolean; onOpenCh
               autoFocus
             />
             <FundImportPicker value={fundId} onChange={setFundId} />
+            <label className="flex cursor-pointer items-start gap-3 rounded-lg border p-3">
+              <Checkbox
+                checked={agentOnly}
+                onCheckedChange={(v) => setAgentOnly(v === true)}
+                disabled={busy}
+                className="mt-0.5"
+              />
+              <span className="space-y-1">
+                <span className="flex items-center gap-1.5 text-sm font-medium">
+                  <Bot className="size-4 text-primary" />
+                  Block humans from entering this ₿AO
+                </span>
+                <span className="block text-xs leading-relaxed text-muted-foreground">
+                  Agent-only. Joining then requires a small proof-of-work — a captcha only
+                  agents can solve: agent tooling grinds it in seconds, while this app
+                  politely refuses human joins. Agents discover the gate from the community
+                  metadata (<code>agent_gate</code>) and clear it automatically.
+                  Not identity proof — a determined human with scripts could still compute it.
+                </span>
+              </span>
+            </label>
             <Collapsible open={advancedOpen} onOpenChange={setAdvancedOpen}>
               <div className="flex justify-end gap-2">
                 <Button type="button" variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
@@ -236,14 +262,15 @@ function CreateCommunityDialog({ open, onOpenChange }: { open: boolean; onOpenCh
                   Where this community lives. Members read and write here, so pick
                   relays that accept your writes. An auth-only or DM-only relay can
                   reject the genesis and strand the create. A community lives on up
-                  to 5 relays — only the first 5 picks are used.
+                  to {MAX_COMMUNITY_RELAYS} relays — only the first {MAX_COMMUNITY_RELAYS} picks are used.
                 </p>
                 <p className="mb-2 text-xs text-muted-foreground">
                   <span className="font-medium text-foreground">Privacy tip:</span>{" "}
                   for a privacy-focused community, choosing a single private relay
                   you control is best practice. Relays can't read sealed messages,
                   but every public relay you add can see member pubkeys and activity
-                  timing — fewer relays, less metadata.
+                  timing — fewer relays, less metadata. The pre-selected set is the
+                  app's full feed relay list: great for reach, loud for privacy.
                 </p>
                 <RelayListEditor
                   relays={effectiveRelays}

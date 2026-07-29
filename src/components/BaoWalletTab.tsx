@@ -16,6 +16,7 @@ import {
 import { QRCodeSVG } from 'qrcode.react';
 
 import { Button } from '@/components/ui/button';
+import { SatsPresetPills } from '@/components/SatsPresetPills';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import {
@@ -134,7 +135,7 @@ export function BaoWalletTab({ seedPhrase, user, relayUrls }: BaoWalletTabProps)
           <CardTitle className='flex items-center justify-between text-base font-medium'>
             <span className='flex items-center gap-2'>
               <WalletIcon className='size-5 text-primary' />
-              ₿AO MARKETS balance
+              ₿AO testnet coins
               <Badge variant='outline'>signet</Badge>
             </span>
             <Button variant='ghost' size='icon' className='size-7' onClick={refreshAll}>
@@ -149,7 +150,7 @@ export function BaoWalletTab({ seedPhrase, user, relayUrls }: BaoWalletTabProps)
             <>
               <div className='flex items-baseline gap-2'>
                 <span className='text-3xl font-bold'>{cashuWallet.totalBalance}</span>
-                <span className='text-muted-foreground'>demo sats</span>
+                <span className='text-muted-foreground'>testnet sats</span>
               </div>
               <p className='text-xs text-muted-foreground mt-3 leading-relaxed'>
                 ₿AO wallet is used for educational purposes only and to empower Nostr Pets.
@@ -297,17 +298,20 @@ function LightningPanel({
 
       <TabsContent value='receive' className='space-y-4 pt-2'>
         {!invoiceQuote ? (
-          <div className='flex gap-2'>
-            <Input
-              type='number'
-              placeholder='Amount in demo sats'
-              value={invoiceAmount}
-              onChange={(e) => setInvoiceAmount(e.target.value)}
-            />
-            <Button onClick={handleCreateInvoice} disabled={wallet.loading || !invoiceAmount}>
-              <Zap className='size-4 mr-1.5' />
-              Create invoice
-            </Button>
+          <div className='space-y-2'>
+            <div className='flex gap-2'>
+              <Input
+                type='number'
+                placeholder='Amount in demo sats'
+                value={invoiceAmount}
+                onChange={(e) => setInvoiceAmount(e.target.value)}
+              />
+              <Button onClick={handleCreateInvoice} disabled={wallet.loading || !invoiceAmount}>
+                <Zap className='size-4 mr-1.5' />
+                Create invoice
+              </Button>
+            </div>
+            <SatsPresetPills value={invoiceAmount} onSelect={(s) => setInvoiceAmount(String(s))} />
           </div>
         ) : (
           <div className='space-y-4 flex flex-col items-center'>
@@ -477,6 +481,7 @@ function CashuPanel({ wallet }: { wallet: ReturnType<typeof useBaoCashuWallet> }
                 Generate token
               </Button>
             </div>
+            <SatsPresetPills value={sendAmount} onSelect={(s) => setSendAmount(String(s))} />
             {generatedToken && (
               <div className='space-y-4 flex flex-col items-center pt-2'>
                 <div className='rounded-xl bg-white p-4 shadow-sm'>
@@ -504,16 +509,19 @@ function CashuPanel({ wallet }: { wallet: ReturnType<typeof useBaoCashuWallet> }
 
         <TabsContent value='invoice' className='space-y-4 pt-2'>
           {!invoiceQuote ? (
-            <div className='flex gap-2'>
-              <Input
-                type='number'
-                placeholder='Amount in demo sats'
-                value={invoiceAmount}
-                onChange={(e) => setInvoiceAmount(e.target.value)}
-              />
-              <Button onClick={handleCreateInvoice} disabled={wallet.loading || !invoiceAmount}>
-                Create invoice
-              </Button>
+            <div className='space-y-2'>
+              <div className='flex gap-2'>
+                <Input
+                  type='number'
+                  placeholder='Amount in demo sats'
+                  value={invoiceAmount}
+                  onChange={(e) => setInvoiceAmount(e.target.value)}
+                />
+                <Button onClick={handleCreateInvoice} disabled={wallet.loading || !invoiceAmount}>
+                  Create invoice
+                </Button>
+              </div>
+              <SatsPresetPills value={invoiceAmount} onSelect={(s) => setInvoiceAmount(String(s))} />
             </div>
           ) : (
             <div className='space-y-4 flex flex-col items-center'>

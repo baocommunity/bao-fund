@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Bot, ChevronDown, ChevronUp, CircleDollarSign, ExternalLink, HandCoins, Loader2, Plus, Search, Sparkles, User, Users, Waves, X } from 'lucide-react';
 import { useSearchParams } from 'react-router-dom';
 
+import { AttestationPanel } from '@/components/bao-fund/AttestationPanel';
 import { ComputeCreditsTab } from '@/components/bao-fund/ComputeCreditsTab';
 import { CreateCampaignDialog } from '@/components/bao-fund/CreateCampaignDialog';
 import { FundraiserContributions } from '@/components/bao-fund/FundraiserContributions';
@@ -491,6 +492,7 @@ function CampaignCard({ fundraiser: f, expanded, onToggle, detail, detailLoading
                   {detail.milestones.map((m) => (
                     <div key={m.id} className="space-y-1.5">
                       <MilestoneMarketWidget milestone={m} />
+                      <AttestationPanel fundraiser={detail.fundraiser} milestone={m} isOwner={isOwner} />
                       {m.status === 'unlocked' && isOwner && (m.market_resolution === 'yes' || !m.market_id) && (
                         <div className="flex justify-end">
                           <Button

@@ -9,8 +9,14 @@
 
 import type { GroupKey } from "@/concord-v2/lib/derive";
 
-/** Protocol recommendation for a community's relay set (CORD-02 §6). */
-export const MAX_COMMUNITY_RELAYS = 5;
+/**
+ * Protocol recommendation for a community's relay set (CORD-02 §6). Kept in
+ * line with the app's default relay set so a creator can host a community on
+ * the same broad set their feed uses; members who care about metadata
+ * privacy are advised (in the create UI) to pare the set down to a single
+ * private relay instead.
+ */
+export const MAX_COMMUNITY_RELAYS = 15;
 
 /** Community/channel/role name cap: 64 bytes of UTF-8 (CORD-02 §6). */
 export const NAME_MAX_BYTES = 64;
@@ -21,16 +27,33 @@ export const MAX_BUNDLE_CHANNELS = 256;
 /** The Community List caps at 50 memberships (CORD-02 §8). */
 export const MAX_LIST_MEMBERSHIPS = 50;
 
-/** Dedupe (order-preserving) + truncate a relay set to the recommended cap. */
+/** Canonical relay URL for dedupe + display: lowercase scheme/host, no
+ * trailing slash. `wss://relay.damus.io/` and `wss://relay.damus.io` are the
+ * same relay; treating them as distinct strings seeded duplicate entries
+ * (and double connections) into community relay sets. */
+export function canonicalRelayUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const path = u.pathname.replace(/\/+$/, "");
+    return `${u.protocol}//${u.host}${path}${u.search}`;
+  } catch {
+    return url.replace(/\/+$/, "");
+  }
+}
+
+/** Dedupe (order-preserving, by canonical URL) + truncate a relay set to the
+ * recommended cap. Emits the canonical form so displays don't mix
+ * trailing-slash variants of the same relay. */
 export function capRelays(relays: string[], cap = MAX_COMMUNITY_RELAYS): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const r of relays) {
     if (out.length >= cap) break;
-    if (typeof r === "string" && r && !seen.has(r)) {
-      seen.add(r);
-      out.push(r);
-    }
+    if (typeof r !== "string" || !r) continue;
+    const canonical = canonicalRelayUrl(r);
+    if (seen.has(canonical)) continue;
+    seen.add(canonical);
+    out.push(canonical);
   }
   return out;
 }
