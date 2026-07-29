@@ -11,6 +11,7 @@ import { Avatar, AvatarImage, AvatarFallback } from '@/components/ui/avatar';
 import { getAvatarShape } from '@/lib/avatarShape';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { AppLogo } from '@/components/AppLogo';
+import { ThemeQuickSwitch } from '@/components/ThemeQuickSwitch';
 import { EmojifiedText } from '@/components/CustomEmoji';
 import { SidebarNavList } from '@/components/SidebarNavItem';
 import { SidebarMoreMenu } from '@/components/SidebarMoreMenu';
@@ -79,22 +80,28 @@ export function LeftSidebar({ collapsed = false, onToggleCollapse }: LeftSidebar
         collapsed ? 'w-[72px] px-2 items-center' : 'px-4 w-[300px] lg:w-1/4 lg:max-w-[300px]',
       )}
     >
-      {/* Logo + collapse toggle */}
+      {/* Logo + theme switch + collapse toggle */}
       <div className={cn('flex mb-1', collapsed ? 'flex-col items-center gap-2 px-1' : 'items-center justify-between px-3')}>
-        <Link to="/" onClick={scrollToTopIfCurrent('/')}>
+        {/* shrink-0: never let the flex row compress the logo — Tailwind's
+            preflight max-width:100% would clamp the img's width while its
+            inline height stays fixed, squishing it out of proportion */}
+        <Link to="/" onClick={scrollToTopIfCurrent('/')} className="shrink-0">
           <div className="bg-background/85 rounded-full">
             <AppLogo size={collapsed ? 36 : 48} />
           </div>
         </Link>
-        <button
-          type="button"
-          onClick={onToggleCollapse}
-          className="p-1.5 rounded-full text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors"
-          aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        >
-          {collapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
-        </button>
+        <div className={cn('flex items-center', collapsed ? 'flex-col gap-2' : 'gap-1.5')}>
+          <ThemeQuickSwitch compact={collapsed} />
+          <button
+            type="button"
+            onClick={onToggleCollapse}
+            className="p-1.5 rounded-full text-muted-foreground hover:text-foreground hover:bg-secondary/60 transition-colors"
+            aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {collapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
+          </button>
+        </div>
       </div>
 
       {/* Nav */}
@@ -129,7 +136,7 @@ export function LeftSidebar({ collapsed = false, onToggleCollapse }: LeftSidebar
           <button
             onClick={() => setLoginDialogOpen(true)}
             className={cn(
-              'flex items-center justify-center rounded-full bg-[var(--2140-bitcoin)] text-black font-semibold hover:bg-[var(--2140-bitcoin-hover)] transition-colors cursor-pointer',
+              'flex items-center justify-center rounded-full bg-[var(--2140-bitcoin)] text-[var(--2140-on-bitcoin)] font-semibold hover:bg-[var(--2140-bitcoin-hover)] transition-colors cursor-pointer',
               collapsed ? 'w-10 h-10' : 'w-full h-11 text-sm gap-2',
             )}
             title="Join"

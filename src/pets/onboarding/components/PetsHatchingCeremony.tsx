@@ -403,7 +403,7 @@ export function PetsHatchingCeremony({
       activeWallet.mintUrl,
       { memo: 'Pets egg reroll' },
     );
-    if (result === 'pending') {
+    if (result.status === 'pending') {
       // The sats left the wallet but the nutzap event is queued for retry.
       // Honor the payment — do NOT make the user pay again.
       toast({
@@ -412,7 +412,7 @@ export function PetsHatchingCeremony({
       });
       return true;
     }
-    if (result !== 'sent') {
+    if (result.status !== 'sent') {
       toast({
         title: 'Payment failed',
         description: 'The reroll payment did not go through. Your egg was not changed.',

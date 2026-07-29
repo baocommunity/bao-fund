@@ -12,6 +12,7 @@ import type { NostrEvent } from '@nostrify/nostrify';
 import type { CashuWallet, MintKeyset } from '@cashu/cashu-ts';
 
 import type { PurchaseRequest } from '../types/shop.types';
+import type { PetsWalletMode } from '@/pets/core/hooks/usePetsWallet';
 import type { NostrPetProfile, PetsCompanion, StorageItem } from '@/pets/core/lib/pets';
 import {
   KIND_PETS_STATE,
@@ -24,6 +25,63 @@ import { getShopItemById } from '../lib/pets-shop-items';
 function getSelectedMintBalance(wallet?: (CashuWalletState & CashuWalletActions) | null): number {
   if (!wallet?.mintUrl) return 0;
   return wallet.balances?.[wallet.mintUrl] ?? 0;
+}
+
+/**
+ * Paid-but-incomplete purchase journal (localStorage).
+ *
+ * The shop pays the treasury by nutzap BEFORE the profile update that grants
+ * the item. If the profile update fails, the payment is already gone and the
+ * error tells the user to contact support — but the Buy button re-arms, and
+ * without a journal a retry would send a SECOND nutzap for the same item.
+ * Journaling the payment lets a retry complete the delivery without paying
+ * again. Entries are per (pubkey, itemId): at most one uncompleted paid
+ * purchase per item can exist, and it is cleared as soon as the item lands.
+ */
+const PAID_PENDING_PREFIX = 'pets-shop-paid-pending';
+
+interface PaidPendingPurchase {
+  quantity: number;
+  amountSats: number;
+  mintUrl: string | null;
+  paidAt: number;
+}
+
+function paidPendingKey(pubkey: string, itemId: string): string {
+  return `${PAID_PENDING_PREFIX}:${pubkey}:${itemId}`;
+}
+
+function readPaidPending(pubkey: string, itemId: string): PaidPendingPurchase | null {
+  try {
+    const raw = localStorage.getItem(paidPendingKey(pubkey, itemId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<PaidPendingPurchase>;
+    if (typeof parsed.quantity !== 'number' || typeof parsed.amountSats !== 'number') return null;
+    return {
+      quantity: parsed.quantity,
+      amountSats: parsed.amountSats,
+      mintUrl: typeof parsed.mintUrl === 'string' ? parsed.mintUrl : null,
+      paidAt: typeof parsed.paidAt === 'number' ? parsed.paidAt : 0,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writePaidPending(pubkey: string, itemId: string, entry: PaidPendingPurchase): void {
+  try {
+    localStorage.setItem(paidPendingKey(pubkey, itemId), JSON.stringify(entry));
+  } catch {
+    // Journal is best-effort; a full localStorage must not block the purchase.
+  }
+}
+
+function clearPaidPending(pubkey: string, itemId: string): void {
+  try {
+    localStorage.removeItem(paidPendingKey(pubkey, itemId));
+  } catch {
+    // Ignore — a stale entry only makes the next retry skip a re-payment.
+  }
 }
 
 /**
@@ -46,14 +104,14 @@ export function estimateCashuSendFee(amount: number, wallet: CashuWallet | null)
 }
 
 /** Minimum pet-bound fiat balance to keep as a reserve before falling back to wallet rails. */
-const PET_FIAT_RESERVE_SATS = 100;
+export const PET_FIAT_RESERVE_SATS = 100;
 
 /**
  * Compute how much of a sats-priced purchase should be covered by the pet's
  * bound fiat balance vs the wallet. The pet always spends first, but we leave
  * a small reserve so the pet is not emptied to zero.
  */
-function splitSatsPayment(
+export function splitSatsPayment(
   totalSatsCost: number,
   petFiatBalance: number,
 ): { petFiatSpend: number; walletSatsCost: number } {
@@ -79,23 +137,32 @@ function splitSatsPayment(
  * Hook to purchase items from the Pets Shop.
  *
  * Handles:
- * - Pet-bound fiat balance first for sats-priced items
+ * - Pet-bound fiat balance first for sats-priced items (demo mode only — see
+ *   the note at the split below)
  * - Sats payment via a nutzap to the 2140 treasury from the active wallet:
  *   the real Cashu wallet in mainnet mode, the BAO signet Cashu wallet in
  *   demo mode. Same rail, separated by mint — demo sats are valueless.
  * - Storage updates (stacking or adding new items)
  * - Atomic profile update
+ *
+ * `walletMode` MUST be the mode that selected `externalWallet` (from
+ * `usePetsWallet`). The rail is never derived from the relay-published
+ * profile `wallet_mode` tag: that tag can desync across devices or when its
+ * publish fails, and getting the rail wrong either spends real sats while
+ * calling them "demo" or sends valueless signet tokens to the treasury as
+ * if they were real payment.
  */
 export function usePetsPurchaseItem(
   currentProfile: NostrPetProfile | null,
   companion?: PetsCompanion | null,
   externalWallet?: (CashuWalletState & CashuWalletActions) | null,
   onCompanionUpdated?: (event: NostrEvent) => void,
+  walletMode?: PetsWalletMode,
 ) {
   const { user } = useCurrentUser();
   const { nostr } = useNostr();
   const { config } = useAppContext();
-  const { mutateAsync: publishEvent } = usePetsNostrPublish();
+  const { mutateAsync: publishEvent, petsEnabled } = usePetsNostrPublish();
   const queryClient = useQueryClient();
 
   return useMutation({
@@ -106,6 +173,17 @@ export function usePetsPurchaseItem(
 
       if (!currentProfile) {
         throw new Error('Profile not found');
+      }
+
+      // Check the publish preference BEFORE any payment: every successful
+      // purchase ends with a profile/companion publish, which is guarded by
+      // this preference and throws deterministically when it is off. Paying
+      // the treasury first and only then hitting the guard strands the sats
+      // (hunt finding: nutzap sent before a 100%-deterministic failure).
+      if (!petsEnabled) {
+        throw new Error(
+          'Pets publishing is disabled. Turn on “Publish pet events” in Settings → Privacy & Publishing to buy items.',
+        );
       }
 
       if (!Number.isInteger(quantity) || quantity <= 0) {
@@ -127,9 +205,13 @@ export function usePetsPurchaseItem(
       const totalFiatCost = fiatPrice * quantity;
       const totalSatsCost = satsPrice * quantity;
 
-      // Use the current profile for initial wallet-mode decisions; the serialized
-      // update below re-reads the freshest profile before publishing.
-      const isCashuMode = currentProfile.walletMode === 'cashu';
+      // The rail comes from the wallet actually being charged (passed in by
+      // the caller), not from the profile `wallet_mode` tag — the tag is only
+      // a cross-device hint and may be stale. Fallback to the tag only when
+      // the caller did not say which wallet it handed us.
+      const isCashuMode = walletMode !== undefined
+        ? walletMode === 'cashu'
+        : currentProfile.walletMode === 'cashu';
 
       // Determine the intended currency from the explicit request or the price.
       // Reject mismatched price/currency pairs so the button price always
@@ -175,8 +257,15 @@ export function usePetsPurchaseItem(
         currency = isCashuMode ? 'sats' : 'demo sats';
         totalCost = totalSatsCost;
 
-        // Split the cost between pet-bound fiat and the wallet.
-        const split = splitSatsPayment(totalSatsCost, companion?.fiatBalance ?? 0);
+        // Split the cost between pet-bound fiat and the wallet — DEMO MODE
+        // ONLY. The pet's fiat_balance is a self-declared tag on the user's
+        // own companion event (every egg starts with 2140 and anyone can
+        // republish it at any value), so letting it offset REAL sats would
+        // let anyone mint themselves free items paid for by the 2140
+        // treasury. In mainnet mode the wallet always pays the full cost.
+        const split = isCashuMode
+          ? { petFiatSpend: 0, walletSatsCost: totalSatsCost }
+          : splitSatsPayment(totalSatsCost, companion?.fiatBalance ?? 0);
         petFiatSpend = split.petFiatSpend;
         walletSatsCost = split.walletSatsCost;
 
@@ -191,49 +280,91 @@ export function usePetsPurchaseItem(
           if (!treasuryNpub) {
             throw new Error('Pets treasury is not configured.');
           }
-          if (!externalWallet.mintUrl) {
-            throw new Error('Select a mint in your Cashu wallet before buying with sats.');
-          }
-          const selectedMintBalance = getSelectedMintBalance(externalWallet);
-          const feeReserve = estimateCashuSendFee(walletSatsCost, externalWallet.wallet ?? null);
-          const totalNeeded = walletSatsCost + feeReserve;
-          if (selectedMintBalance < totalNeeded) {
-            throw new Error(
-              `Insufficient balance on the selected mint. You need ${walletSatsCost.toLocaleString()} sats + ~${feeReserve.toLocaleString()} sats fee (${totalNeeded.toLocaleString()} total) but only have ${selectedMintBalance.toLocaleString()} sats on ${externalWallet.mintUrl ?? 'the selected mint'}.`
+
+          // Idempotency: if a previous attempt already paid for this item but
+          // never delivered it (profile/companion update failed), complete the
+          // delivery WITHOUT paying again. Without this journal the Buy button
+          // re-arms and a retry sends a second nutzap for the same item.
+          const pendingPurchase = readPaidPending(user.pubkey, itemId);
+          if (pendingPurchase) {
+            if (pendingPurchase.quantity !== quantity) {
+              throw new Error(
+                'A previous payment for this item did not complete. Please contact 2140 support before buying it again.',
+              );
+            }
+            console.warn(
+              `[usePetsPurchaseItem] Completing delivery of a previously paid purchase (${pendingPurchase.amountSats} sats, paid ${new Date(pendingPurchase.paidAt).toISOString()}) — skipping the treasury payment.`,
             );
+            treasuryPaid = true;
+          } else {
+            if (!externalWallet.mintUrl) {
+              throw new Error('Select a mint in your Cashu wallet before buying with sats.');
+            }
+            const selectedMintBalance = getSelectedMintBalance(externalWallet);
+            const feeReserve = estimateCashuSendFee(walletSatsCost, externalWallet.wallet ?? null);
+            const totalNeeded = walletSatsCost + feeReserve;
+            if (selectedMintBalance < totalNeeded) {
+              throw new Error(
+                `Insufficient balance on the selected mint. You need ${walletSatsCost.toLocaleString()} sats + ~${feeReserve.toLocaleString()} sats fee (${totalNeeded.toLocaleString()} total) but only have ${selectedMintBalance.toLocaleString()} sats on ${externalWallet.mintUrl ?? 'the selected mint'}.`
+              );
+            }
+            // Pay the 2140 treasury BEFORE updating the profile so a payment failure
+            // cannot grant a free item. Nutzaps cannot be clawed back automatically;
+            // if the profile update fails after this point we surface a clear error
+            // so support can refund from the treasury side.
+            const sendResult = await externalWallet.sendNutzap(walletSatsCost, treasuryNpub, externalWallet.mintUrl, {
+              memo: `Pets shop: ${item.name}`,
+            });
+            if (sendResult.status === 'failed') {
+              throw new Error(externalWallet.error ?? 'Payment to the Pets treasury failed.');
+            }
+            // 'sent' or 'pending': the sats are gone either way — a pending
+            // nutzap is saved and auto-retried until it lands, so the purchase
+            // MUST proceed. Telling the user it failed would invite a retry and
+            // a second payment for the same item. Journal the payment FIRST so
+            // any later failure lets a retry complete delivery without paying again.
+            writePaidPending(user.pubkey, itemId, {
+              quantity,
+              amountSats: walletSatsCost,
+              mintUrl: externalWallet.mintUrl,
+              paidAt: Date.now(),
+            });
+            treasuryPaid = true;
           }
-          // Pay the 2140 treasury BEFORE updating the profile so a payment failure
-          // cannot grant a free item. Nutzaps cannot be clawed back automatically;
-          // if the profile update fails after this point we surface a clear error
-          // so support can refund from the treasury side.
-          const sent = await externalWallet.sendNutzap(walletSatsCost, treasuryNpub, externalWallet.mintUrl, {
-            memo: `Pets shop: ${item.name}`,
-          });
-          if (!sent) {
-            throw new Error(externalWallet.error ?? 'Payment to the Pets treasury failed.');
-          }
-          treasuryPaid = true;
         }
       } else {
         currency = 'fiat coins';
         totalCost = totalFiatCost;
       }
 
-      // If pet-bound fiat is being spent, publish the companion update first.
-      // This happens outside the profile serialization because it is a different
-      // kind (31124 vs 11125), but it is idempotent: a failure here stops the
-      // purchase before any wallet money moves.
+      // If pet-bound fiat is being spent (demo mode only), publish the companion
+      // update next. This happens outside the profile serialization because it
+      // is a different kind (31124 vs 11125). Note the treasury nutzap above
+      // has ALREADY been sent at this point, so a failure here must surface the
+      // same paid-but-incomplete support path as a profile-update failure —
+      // silently rethrowing would invite the user to retry and pay twice.
       let companionEvent: NostrEvent | undefined;
       if (petFiatSpend > 0 && companion) {
-        const newFiatBalance = Math.max(0, companion.fiatBalance - petFiatSpend);
-        const petTags = updatePetsTags(companion.event.tags, {
-          fiat_balance: newFiatBalance.toString(),
-        });
-        companionEvent = await publishEvent({
-          kind: KIND_PETS_STATE,
-          content: companion.event.content,
-          tags: petTags,
-        });
+        try {
+          const newFiatBalance = Math.max(0, companion.fiatBalance - petFiatSpend);
+          const petTags = updatePetsTags(companion.event.tags, {
+            fiat_balance: newFiatBalance.toString(),
+          });
+          companionEvent = await publishEvent({
+            kind: KIND_PETS_STATE,
+            content: companion.event.content,
+            tags: petTags,
+          });
+        } catch (fiatPublishError) {
+          if (treasuryPaid) {
+            console.error('[usePetsPurchaseItem] Companion fiat update failed after treasury payment:', fiatPublishError);
+            throw new Error(
+              'Your payment was sent to the 2140 treasury, but the purchase could not be completed. ' +
+                'Please contact 2140 support for a refund.',
+            );
+          }
+          throw fiatPublishError;
+        }
       }
 
       // Serialize the profile update so concurrent purchases/missions cannot
@@ -325,6 +456,10 @@ export function usePetsPurchaseItem(
       if (!result) {
         throw new Error('Profile update returned no changes.');
       }
+
+      // The item landed — any paid-pending journal entry has served its
+      // purpose (no-op for fiat purchases that never wrote one).
+      clearPaidPending(user.pubkey, itemId);
 
       // Notify the caller about the updated companion so the UI can optimistically
       // refresh the pet's fiat balance.

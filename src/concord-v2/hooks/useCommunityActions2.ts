@@ -9,6 +9,7 @@ import { buildJoinRumor, currentGuestbookGroup, sealGuestbook } from "@/concord-
 import { useAppContext } from "@/hooks/useAppContext";
 import { useCurrentUser } from "@/hooks/useCurrentUser";
 import { fetchCreatorDmRelays } from "@/lib/creatorRelays";
+import { APP_CURATED_FEED_RELAYS } from "@/lib/appRelays";
 import { APP_RELAYS } from "@/lib/platform";
 import { preferPortableRelays, unusableRelaysReason } from "@/lib/relayUsability";
 import { toJoinMaterial, rehydrateCommunity, type CommunityListEntry, type JoinMaterial } from "@/concord-v2/lib/communityList";
@@ -166,18 +167,29 @@ export function inviteRefOf(invite: ParsedInviteLink): string {
 }
 
 /**
- * The default home-relay set for a NEW community: the app relays and the CORD
- * stock set (the wss:// interop relays every CORD client shares — jskitty,
- * asia.vectorapp, ditto, dreamith) as the reliable base, then the creator's
- * NIP-17 DM relays. A creator's inbox relays alone can be a poor community
- * home: an auth-gated or DM-only relay rejects the genesis gift wrap (kind
- * 1059), and if that's the whole set the create strands with "No relay accepted
- * the change." Leading with known write-open CORD relays guarantees the genesis
- * lands. Portable-filtered so a stray `ws://` dev relay can't lock https members
- * out (#47), deduped, and capped to the recommended community relay count.
+ * The curated-feed relay set, offered as extra community-home candidates in
+ * the create dialog's advanced relay menu. These are the large public relays
+ * the feed already uses, so they are known write-open homes where the genesis
+ * gift wrap (kind 1059) lands. Portable-filtered so a stray non-`wss://`
+ * entry can never lock https members out (#47). Consumed from
+ * `@/lib/appRelays` — the relay set itself is owned by the feed config.
+ */
+export const FEED_RELAY_CANDIDATES: string[] = preferPortableRelays(APP_CURATED_FEED_RELAYS);
+
+/**
+ * The default home-relay set for a NEW community: the app relays, the
+ * curated-feed relay candidates, and the CORD stock set (the wss:// interop
+ * relays every CORD client shares — jskitty, asia.vectorapp, ditto, dreamith)
+ * as the reliable base, then the creator's NIP-17 DM relays. A creator's
+ * inbox relays alone can be a poor community home: an auth-gated or DM-only
+ * relay rejects the genesis gift wrap (kind 1059), and if that's the whole
+ * set the create strands with "No relay accepted the change." Leading with
+ * known write-open relays guarantees the genesis lands. Portable-filtered so
+ * a stray `ws://` dev relay can't lock https members out (#47), deduped, and
+ * capped to the recommended community relay count.
  */
 export function defaultCreateRelays(appRelays: string[], dmRelays: string[]): string[] {
-  return capRelays(preferPortableRelays([...appRelays, ...STOCK_RELAYS, ...dmRelays]));
+  return capRelays(preferPortableRelays([...appRelays, ...FEED_RELAY_CANDIDATES, ...STOCK_RELAYS, ...dmRelays]));
 }
 
 /**

@@ -25,6 +25,10 @@
   --2140-bitcoin: #f7931a;
   --2140-bitcoin-hover: #fb923c;
   --2140-bitcoin-subtle: rgba(247, 147, 26, 0.12);
+  /* Text/icons painted on top of --2140-bitcoin fills. Black passes on the
+     bright dark-mode orange; light mode darkens the orange, so it flips to
+     white (see html.light). */
+  --2140-on-bitcoin: #000000;
   --2140-nostr: #8e44ad;
   --2140-nostr-hover: #a855f7;
   --2140-nostr-subtle: rgba(142, 68, 173, 0.12);
@@ -50,6 +54,41 @@
   /* Motion */
   --transition-fast: 150ms ease;
   --transition-base: 200ms ease;
+}
+
+/* Light palette — the :root defaults above are dark-first, so swap every
+   --2140-* value when the app theme resolves to light (AppProvider sets
+   document.documentElement.className = 'light'). Without this the landing
+   page renders near-white text on the light body background. Accent hues are
+   deepened so they keep ~4.5:1 contrast against white (raw bitcoin orange
+   #f7931a is only ~2.2:1). */
+html.light {
+  --2140-bg: #fafafa;
+  --2140-surface: #ffffff;
+  --2140-raised: #f4f4f5;
+  --2140-overlay: rgba(250, 250, 250, 0.9);
+
+  --2140-fg: #09090b;
+  --2140-muted: #52525b;
+  --2140-placeholder: #a1a1aa;
+
+  --2140-border: #e4e4e7;
+  --2140-border-hover: #d4d4d8;
+
+  --2140-bitcoin: #b45309;
+  --2140-bitcoin-hover: #92400e;
+  --2140-bitcoin-subtle: rgba(180, 83, 9, 0.1);
+  --2140-on-bitcoin: #ffffff;
+  --2140-nostr: #7e22ce;
+  --2140-nostr-hover: #6b21a8;
+  --2140-nostr-subtle: rgba(126, 34, 206, 0.1);
+
+  /* Semantic colors deepened for white backgrounds (dark-mode values are
+     tuned for black and fail WCAG on light surfaces) */
+  --2140-danger: #b91c1c;
+  --2140-success: #166534;
+  --2140-warning: #b45309;
+  --2140-info: #1d4ed8;
 }
 
 /* Tailwind dark-mode pairing */
@@ -82,6 +121,14 @@ html.dark {
   --input: 0 0% 15%;
   --ring: 32.9 93.2% 53.5%;
   --radius: 0.75rem;
+}
+
+/* Light-mode Shadcn token fixes. The builtin light theme derives
+   --muted-foreground too pale (#787878 ≈ 4.06:1 on the light background);
+   darken it to zinc-600 (~7:1) for WCAG AA. html.light beats the injected
+   :root theme-vars block on specificity, same as html.dark above. */
+html.light {
+  --muted-foreground: 240 4% 34%;
 }
 
 /* Utility helpers */

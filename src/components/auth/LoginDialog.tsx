@@ -31,6 +31,7 @@ import {
 import { getNsecCredential } from '@/lib/credentialManager';
 import { DialogTitle } from '@radix-ui/react-dialog';
 import { useAppContext } from '@/hooks/useAppContext';
+import { useBaoLogo } from '@/hooks/useBaoLogo';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { useShareOrigin } from '@/hooks/useShareOrigin';
 import {
@@ -68,6 +69,7 @@ const connectStatusLabel = (status: NostrConnectStatus | null): string => {
 
 const LoginDialog: React.FC<LoginDialogProps> = ({ isOpen, onClose, onLogin, onSignupClick }) => {
   const { config } = useAppContext();
+  const logoSrc = useBaoLogo();
   const shareOrigin = useShareOrigin();
   const [isLoading, setIsLoading] = useState(false);
   const [isFileLoading, setIsFileLoading] = useState(false);
@@ -649,8 +651,8 @@ const LoginDialog: React.FC<LoginDialogProps> = ({ isOpen, onClose, onLogin, onS
             style={{ fontFamily: 'var(--title-font-family, serif)' }}
           >
             <img
-              src="/logo.png"
-              alt="2140.wtf"
+              src={logoSrc}
+              alt="₿AO Fund"
               className="h-12 w-auto mx-auto"
             />
           </DialogTitle>

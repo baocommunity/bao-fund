@@ -249,13 +249,13 @@ function useApplyBackground(theme: Theme, customTheme: ThemeConfig | undefined, 
   }, [theme, bgUrl, bgMode, bgOpacity]);
 }
 
-/** Keep the favicon pointing at the 2140 logo. */
+/** Keep the favicon pointing at the ₿AO logo. */
 function useApplyFavicon() {
   useEffect(() => {
     const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
-    if (link && !link.href.endsWith('/logo.jpg')) {
-      link.type = 'image/jpeg';
-      link.href = '/logo.jpg';
+    if (link && !link.href.endsWith('/favicon.ico')) {
+      link.type = 'image/x-icon';
+      link.href = '/favicon.ico';
     }
   }, []);
 }

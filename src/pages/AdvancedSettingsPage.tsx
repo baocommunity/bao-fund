@@ -1,6 +1,7 @@
 import { useSeoMeta } from '@unhead/react';
 import { PageHeader } from '@/components/PageHeader';
 import { IntroImage } from '@/components/IntroImage';
+import { AppearanceSettings } from '@/components/AppearanceSettings';
 import { AdvancedSettings } from '@/components/AdvancedSettings';
 import { WalletSettings } from '@/components/WalletSettings';
 import { useCurrentUser } from '@/hooks/useCurrentUser';
@@ -47,6 +48,8 @@ export function AdvancedSettingsPage() {
             </p>
           </div>
         </div>
+
+        <AppearanceSettings />
 
         {/* Wallet collapsible — only when logged in */}
         {user && (

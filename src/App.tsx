@@ -192,8 +192,11 @@ const hardcodedConfig: AppConfig = {
     // Its nsec stays with the operator and never enters this repo.
     'npub1lwsmhk9t2le9see32l006khunnk6qpxxs30enke3d8lykcd6wstqegy86j',
   contentWarningPolicy: "blur",
+  // Crash reporting via Sentry is wired up but NOT configured: no account
+  // exists yet, so the DSN stays empty (SentryProvider no-ops) and reporting
+  // is opt-in. To enable: create a Sentry project, set VITE_SENTRY_DSN.
   sentryDsn: import.meta.env.VITE_SENTRY_DSN || "",
-  sentryEnabled: true,
+  sentryEnabled: false,
   plausibleDomain: import.meta.env.VITE_PLAUSIBLE_DOMAIN || "",
   plausibleEndpoint: import.meta.env.VITE_PLAUSIBLE_ENDPOINT || "",
   savedFeeds: [],

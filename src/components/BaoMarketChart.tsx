@@ -436,7 +436,7 @@ export function BaoMarketChart({ market, className }: BaoMarketChartProps) {
               className={cn(
                 'px-2.5 sm:px-3 py-1.5 sm:py-1 rounded-md text-xs font-medium transition-colors min-w-[36px]',
                 range === r
-                  ? 'bg-[var(--2140-bitcoin)] text-black'
+                  ? 'bg-[var(--2140-bitcoin)] text-[var(--2140-on-bitcoin)]'
                   : 'bg-secondary text-secondary-foreground hover:bg-secondary/80 border border-border',
               )}
             >

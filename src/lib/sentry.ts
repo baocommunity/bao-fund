@@ -68,6 +68,9 @@ export async function initializeSentry(dsn: string): Promise<void> {
       environment: import.meta.env.MODE,
       // Release
       release: import.meta.env.VERSION,
+      // Never attach IP addresses, user agents, or user context to events.
+      // (Explicit opt-out — crash reports stay anonymous, Goose-style.)
+      sendDefaultPii: false,
       // Censor sensitive data before sending to Sentry
       beforeSend(event) {
         return redactSensitiveData(event) as typeof event;

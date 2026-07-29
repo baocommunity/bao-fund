@@ -13,6 +13,7 @@ import { Progress } from '@/components/ui/progress';
 import { BaoMarketChart } from '@/components/BaoMarketChart';
 import { cn } from '@/lib/utils';
 import { openUrl } from '@/lib/downloadFile';
+import { baoMarketsWebBase } from '@/lib/baoFundraising';
 import type { BaoMarket } from '@/lib/baoMarketParser';
 
 function formatEndDate(timestamp: number): string {
@@ -130,15 +131,25 @@ export function BaoMarketDetailDialog({
             })}
           </div>
 
-          <Button
-            className="w-full mt-6"
-            onClick={() =>
-              openUrl(`https://bao.markets/demo/market/${encodeURIComponent(market.marketId)}`)
-            }
-          >
-            Trade on ₿AO MARKETS
-            <ExternalLink className="size-4 ml-2" />
-          </Button>
+          {(() => {
+            // Local demo markets live only in this machine's API database —
+            // linking to production bao.markets would 404, so offer the raw
+            // market JSON instead. Production keeps the trade deep-link.
+            const webBase = baoMarketsWebBase();
+            const href = webBase
+              ? `${webBase}/demo/market/${encodeURIComponent(market.marketId)}`
+              : null;
+            return href ? (
+              <Button className="w-full mt-6" onClick={() => openUrl(href)}>
+                Trade on ₿AO MARKETS
+                <ExternalLink className="size-4 ml-2" />
+              </Button>
+            ) : (
+              <p className="w-full mt-6 text-center text-xs text-muted-foreground italic">
+                Local demo market — exists only on this machine, not on bao.markets.
+              </p>
+            );
+          })()}
         </div>
       </DialogContent>
     </Dialog>

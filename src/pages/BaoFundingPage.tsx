@@ -600,6 +600,15 @@ function ContributeDialog({ fundraiser, onOpenChange, onContributed }: {
   // recording the contribution twice. Regenerated when the dialog closes.
   const idemKeyRef = useRef<string | null>(null);
 
+  // The dialog stays mounted when the parent swaps in a different fundraiser —
+  // reset per-fundraiser state so stale payment instructions from the previous
+  // one never show, and the idempotency key can't replay across fundraisers.
+  const fundraiserId = fundraiser?.id;
+  useEffect(() => {
+    setInstructions(null);
+    idemKeyRef.current = null;
+  }, [fundraiserId]);
+
   const mutation = useMutation({
     mutationFn: () => {
       if (!idemKeyRef.current) idemKeyRef.current = crypto.randomUUID();

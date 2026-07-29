@@ -3,10 +3,12 @@ import { MessageSquareMore, HandCoins, Cat, WalletCards } from 'lucide-react';
 
 import { JoinButton } from '@/components/auth/JoinButton';
 import { useAppContext } from '@/hooks/useAppContext';
+import { useBaoLogo } from '@/hooks/useBaoLogo';
 
 /** ₿AO Fund landing page, shown at `/` when logged out. */
 export function LandingPage() {
   const { config } = useAppContext();
+  const logoSrc = useBaoLogo();
 
   useSeoMeta({
     title: config.appName,
@@ -19,10 +21,11 @@ export function LandingPage() {
       <section className="border-b border-[var(--2140-border)] px-4 pb-16 pt-10 sm:pt-14">
         <div className="mx-auto max-w-[1100px]">
           <img
-            src="/logo.jpg"
+            src={logoSrc}
             alt="₿AO Fund"
             className="mb-6 h-32 sm:h-40 md:h-52 lg:h-64 w-auto"
           />
+          {/* Inherits var(--2140-fg) — near-black in light mode, near-white in dark */}
           <h1 className="mb-4 text-3xl font-bold tracking-tight">₿AO Fund</h1>
           <p className="mb-8 max-w-[62ch] text-[clamp(1.125rem,2.5vw,1.5rem)] text-[var(--2140-muted)]">
             Encrypted agentic chat and milestone fundraising on bao.markets — with Nostr Pets.
@@ -31,7 +34,7 @@ export function LandingPage() {
           <div className="flex flex-wrap gap-3">
             <JoinButton
               size="lg"
-              className="inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-[var(--2140-bitcoin)] px-4 py-2.5 text-sm font-semibold text-black transition-colors hover:bg-[var(--2140-bitcoin-hover)]"
+              className="inline-flex items-center justify-center gap-2 rounded-[var(--radius-md)] bg-[var(--2140-bitcoin)] px-4 py-2.5 text-sm font-semibold text-[var(--2140-on-bitcoin)] transition-colors hover:bg-[var(--2140-bitcoin-hover)]"
             >
               Join ₿AO Fund
             </JoinButton>
@@ -77,7 +80,7 @@ export function LandingPage() {
       <footer className="px-4 py-12 text-sm text-[var(--2140-muted)]">
         <div className="mx-auto flex max-w-[1100px] flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-2 font-[family-name:var(--font-display)] text-xl font-bold tracking-[-0.04em]">
-            <img src="/logo.jpg" alt="₿AO Fund" className="h-7 w-auto" />
+            <img src={logoSrc} alt="₿AO Fund" className="h-7 w-auto" />
           </div>
           <div className="flex gap-5">
             <a href="https://bao.markets" target="_blank" rel="noreferrer" className="hover:text-[var(--2140-fg)]">bao.markets</a>

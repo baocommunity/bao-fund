@@ -26,7 +26,7 @@ export function BattleInvitePending() {
   const { pendingInvite, isLoading, accept, decline } = useBattleInvites();
   const { companions, isLoading: petsLoading } = usePetssCollection();
   const { config } = useAppContext();
-  const { isCashu } = usePetsWallet();
+  const { wallet: petsWallet, isCashu } = usePetsWallet();
   const { seedPhrase, available: seedAvailable } = useCashuSeed();
   const [petId, setPetId] = useState<string>('');
 
@@ -41,7 +41,16 @@ export function BattleInvitePending() {
 
   const escrowConfigured = !!config.petsBattleEscrowPubkey && !!config.petsBattleEscrowServiceUrl;
   const isRealSatsInvite = pendingInvite?.mode === 'real-sats';
-  const canAcceptRealSats = isRealSatsInvite && isCashu && seedAvailable && escrowConfigured && !!escrowKeypair;
+  // The stake is set by the CHALLENGER — never display a hardcoded default:
+  // accepting auto-locks this exact amount from the wallet in escrow.
+  const stakeSats = pendingInvite?.prizeAmount ?? DEFAULT_PRIZE_SATS;
+  // Never let a player accept a stake they cannot lock: accepting debits the
+  // wallet immediately, and a guest who cannot deposit leaves the host
+  // waiting on escrow forever.
+  const hasStakeBalance = (petsWallet?.totalBalance ?? 0) >= stakeSats;
+  const canAcceptRealSats = isRealSatsInvite && isCashu && seedAvailable && escrowConfigured && !!escrowKeypair && hasStakeBalance;
+  const isNonDefaultStake = isRealSatsInvite && stakeSats !== DEFAULT_PRIZE_SATS;
+  const [stakeAcknowledged, setStakeAcknowledged] = useState(false);
 
   const eligiblePets = companions.filter(
     (pet) => pet.stage === 'baby' || pet.stage === 'adult',
@@ -80,19 +89,48 @@ export function BattleInvitePending() {
 
           <div className="rounded-lg bg-muted p-3 text-sm space-y-1">
             <p>
-              <span className="font-medium">Prize:</span> {DEFAULT_PRIZE_SATS.toLocaleString()} {' '}
+              <span className="font-medium">Prize:</span> {stakeSats.toLocaleString()} {' '}
               {isRealSatsInvite ? 'real sats' : 'demo sats'}
             </p>
             <p>
               <span className="font-medium">Their fighter:</span>{' '}
               {pendingInvite.inviterPet.name} ({pendingInvite.inviterPet.stage})
             </p>
-            {isRealSatsInvite && !canAcceptRealSats && (
+            {isRealSatsInvite && (
+              <p className="text-muted-foreground">
+                Accepting locks {stakeSats.toLocaleString()} real sats from your wallet in escrow. The winner claims both stakes.
+              </p>
+            )}
+            {isNonDefaultStake && (
+              <p className="text-amber-600 dark:text-amber-400">
+                This challenger set a non-standard stake of {stakeSats.toLocaleString()} sats (the default is {DEFAULT_PRIZE_SATS.toLocaleString()}). Only accept if you agreed to this amount.
+              </p>
+            )}
+            {isRealSatsInvite && !canAcceptRealSats && !hasStakeBalance && isCashu && (
+              <p className="text-destructive">
+                Insufficient balance — accepting locks {stakeSats.toLocaleString()} sats but your wallet has {(petsWallet?.totalBalance ?? 0).toLocaleString()}. Top up your Cashu wallet first.
+              </p>
+            )}
+            {isRealSatsInvite && !canAcceptRealSats && (hasStakeBalance || !isCashu) && (
               <p className="text-destructive">
                 Switch to real Cashu and configure battle escrow to accept real-sats battles.
               </p>
             )}
           </div>
+
+          {isNonDefaultStake && canAcceptRealSats && (
+            <label className="flex items-start gap-2 text-sm cursor-pointer">
+              <input
+                type="checkbox"
+                className="mt-0.5"
+                checked={stakeAcknowledged}
+                onChange={(e) => setStakeAcknowledged(e.target.checked)}
+              />
+              <span>
+                I understand {stakeSats.toLocaleString()} real sats will be locked from my wallet when I accept.
+              </span>
+            </label>
+          )}
 
           {petsLoading ? (
             <p className="text-sm text-muted-foreground">Loading your pets…</p>
@@ -132,7 +170,7 @@ export function BattleInvitePending() {
             </Button>
             <Button
               className="flex-1"
-              disabled={!selectedPet || isLoading || (isRealSatsInvite && !canAcceptRealSats)}
+              disabled={!selectedPet || isLoading || (isRealSatsInvite && !canAcceptRealSats) || (isNonDefaultStake && !stakeAcknowledged)}
               onClick={() => selectedPet && accept(selectedPet, escrowKeypair?.pubkey)}
             >
               <Check className="mr-2 size-4" />

@@ -157,8 +157,8 @@ export default defineConfig(({ mode }) => {
   return {
     server: {
       host: "::",
-      port: 3500,
-      // Fail loudly instead of silently drifting to 3501 when the port is
+      port: 3525,
+      // Fail loudly instead of silently drifting to 3526 when the port is
       // taken — the drift is confusing ("which port is the app on now?").
       strictPort: true,
       allowedHosts: env.ALLOWED_HOSTS === "*" ? true : undefined,
@@ -200,7 +200,7 @@ export default defineConfig(({ mode }) => {
       },
     },
     preview: {
-      port: 3500,
+      port: 3525,
       // Avoid stale chunk errors when the preview server is restarted after
       // rebuilds. The lazy-loaded chunks are content-hashed, so a cached
       // index.html can reference chunks that no longer exist.

@@ -1,6 +1,7 @@
 import { useCallback } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { AppLogo } from '@/components/AppLogo';
+import { ThemeQuickSwitch } from '@/components/ThemeQuickSwitch';
 import { BarsStaggeredIcon } from '@/components/icons/BarsStaggeredIcon';
 import { ArcBackground } from '@/components/ArcBackground';
 import { useNavHidden } from '@/contexts/LayoutContext';
@@ -43,15 +44,17 @@ export function MobileTopBar({ onAvatarClick, hasSubHeader }: MobileTopBarProps)
             </button>
           </div>
 
-          {/* Center: 2140.wtf logo */}
+          {/* Center: ₿AO logo */}
           <div className="flex-1 flex items-center justify-center">
             <Link to="/" onClick={handleLogoClick}>
               <AppLogo size={28} />
             </Link>
           </div>
 
-          {/* Right: spacer for symmetry */}
-          <div className="w-7 shrink-0" />
+          {/* Right: theme switch (cycles Bright → Dark → Hacker) */}
+          <div className="flex items-center justify-center w-7 shrink-0">
+            <ThemeQuickSwitch compact />
+          </div>
         </div>
       </div>
     </header>

@@ -1,9 +1,9 @@
-import { useState, useCallback, useMemo, useEffect, useRef, type ComponentType } from 'react';
+import { useState, useCallback, useMemo, useEffect, useRef, type ComponentType, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { useSeoMeta } from '@unhead/react';
 import { nip19 } from 'nostr-tools';
-import { Egg, Moon, Sun, RefreshCw, Check, Plus, Camera, Footprints, Wrench, Theater, ExternalLink, Utensils, Gamepad2, Sparkles, Pill, Music, Mic, Loader2, Lock, Target, Droplets, Heart, Zap, Refrigerator, ShowerHead, Candy, TowelRack, X, Activity, Users, TrendingUp, Swords, Wallet, ShoppingBag, ArrowLeftRight, Cat, Bitcoin, Palette, Maximize, Minimize, Settings } from 'lucide-react';
+import { Egg, Moon, Sun, RefreshCw, Check, Plus, Camera, Footprints, Wrench, Theater, ExternalLink, Utensils, Gamepad2, Sparkles, Pill, Music, Mic, Loader2, Lock, Target, Droplets, Heart, Zap, Refrigerator, ShowerHead, Candy, TowelRack, X, Activity, Users, TrendingUp, Swords, Wallet, ShoppingBag, ArrowLeftRight, Cat, Bitcoin, Palette, Bird, Maximize, Minimize, Settings } from 'lucide-react';
 
 import { useCurrentUser } from '@/hooks/useCurrentUser';
 import { APP_OPERATOR_PUBKEY } from '@/lib/appOperator';
@@ -17,7 +17,7 @@ import { getShopItemById } from '@/pets/shop/lib/pets-shop-items';
 import { timeAgo } from '@/lib/timeAgo';
 import { useAppContext } from '@/hooks/useAppContext';
 import { useNostrPetProfile } from '@/hooks/useNostrPetProfile';
-import { usePetsWallet } from '@/pets/core/hooks/usePetsWallet';
+import { usePetsWallet, loadStoredPetsWalletMode, type PetsWalletMode } from '@/pets/core/hooks/usePetsWallet';
 import type { CashuWalletState, CashuWalletActions } from '@/hooks/useCashuWallet';
 import { useNostrPetProfileNormalization } from '@/hooks/useNostrPetProfileNormalization';
 import { usePetssCollection } from '@/pets/core/hooks/usePetssCollection';
@@ -125,9 +125,11 @@ import {
   BREED_CATEGORIES,
   getCategoryMembers,
   getCustomCategoryMembers,
+  getMemberAssetId,
   isAdultFormMember,
   type PetsBreedCategory,
 } from '@/pets/core/lib/pet-categories';
+import { getBuzzPetAnimatedUrl } from '@/pets/core/lib/buzz-pets';
 import { useCustomForms } from '@/pets/three-d/hooks/useCustomForms';
 import { getAllNeeds } from '@/pets/companion/interaction/needDetection';
 import { PetsDevEditor, usePetsDevUpdate, type PetsDevUpdates, PetsEmotionPanel, useEffectiveEmotion, isLocalhostDev } from '@/pets/dev';
@@ -258,6 +260,7 @@ function BreedCategoryPicker({
     '2140-pets': Sparkles,
     'ditto-blobbi': Cat,
     bao: Wallet,
+    buzz: Bird,
     custom: Palette,
   };
 
@@ -415,7 +418,7 @@ function PetsContent() {
     if (!profile) return;
     const hasStoredMode = (() => {
       try {
-        return localStorage.getItem('pets:walletMode') !== null;
+        return loadStoredPetsWalletMode(user?.pubkey) !== null;
       } catch {
         return false;
       }
@@ -646,6 +649,7 @@ function PetsContent() {
     companion,
     petsWallet,
     updateCompanionEvent,
+    petsWalletResult.mode,
   );
 
   // ─── Use Inventory Item Hook ───
@@ -863,17 +867,51 @@ function PetsContent() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pendingCeremonyCheck, companionDataReady, ceremonyInProgress]);
   
-  // ─── CASE A: Profile still loading ───
-  if (profileLoading && !ceremonyInProgress) {
-    return <DashboardLoadingState />;
-  }
-  
-  // ─── CASE A2: Waiting for companions to decide about ceremony ───
-  if (pendingCeremonyCheck && !companionDataReady && !ceremonyInProgress) {
-    if (DEBUG_PETS) console.log('[PetsPage] Showing: loading (waiting for companions to decide ceremony)');
-    return <DashboardLoadingState />;
-  }
-  
+  // ─── Adoption/hatching flow dialog — mounted ONCE for all dashboard states ───
+  // The hatching ceremony publishes the egg and the pet profile mid-flow, which
+  // flips the very conditions that select between the dashboard states below
+  // (profile appears, companion list resolves, selection resolves). When this
+  // dialog lived inside each state's JSX, the state change unmounted it —
+  // silently killing the ceremony right after commit and stranding the user
+  // with an unhatched egg. Returning the same element as the last child of
+  // every branch below lets React preserve the dialog (and the in-flight
+  // ceremony inside it) across all state changes.
+  const adoptionFlowDialog = (
+    <Dialog
+      open={showAdoptionFlow}
+      onOpenChange={(open) => {
+        setShowAdoptionFlow(open);
+        if (!open) {
+          setSelectedBreedCategory(undefined);
+          setAdoptionStep('category');
+        }
+      }}
+    >
+      <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto p-0">
+        {adoptionStep === 'category' ? (
+          <BreedCategoryPicker
+            compact
+            onSelectCategory={(cat) => {
+              setSelectedBreedCategory(cat);
+              setAdoptionStep('onboarding');
+            }}
+          />
+        ) : (
+          <PetsAdoptionFlowPortal
+            profile={profile ?? null}
+            updateProfileEvent={updateProfileEvent}
+            updateCompanionEvent={updateCompanionEvent}
+            invalidateProfile={invalidateProfile}
+            invalidateCompanion={invalidateCompanion}
+            setStoredSelectedD={setStoredSelectedD}
+            breedCategory={selectedBreedCategory}
+            onComplete={() => setShowAdoptionFlow(false)}
+          />
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+
   // ─── CASE B/C: Hatching ceremony ───
   // Stays mounted until the ceremony explicitly completes, even if the
   // underlying data changes during the ceremony.
@@ -900,66 +938,39 @@ function PetsContent() {
     );
   }
   
-  // After ceremony check, if the user has no profile/pet yet, show the empty
-  // adoption prompt instead of getting stuck on a loading spinner.
-  if (!profile && !profileLoading) {
+  // ─── Dashboard states ───
+  // Every state assigns `content`; the single return at the bottom pairs it
+  // with `adoptionFlowDialog` so the dialog/ceremony survives state changes.
+  let content: ReactNode;
+
+  if (profileLoading) {
+    // ─── CASE A: Profile still loading ───
+    content = <DashboardLoadingState />;
+  } else if (pendingCeremonyCheck && !companionDataReady) {
+    // ─── CASE A2: Waiting for companions to decide about ceremony ───
+    if (DEBUG_PETS) console.log('[PetsPage] Showing: loading (waiting for companions to decide ceremony)');
+    content = <DashboardLoadingState />;
+  } else if (!profile) {
+    // After ceremony check, if the user has no profile/pet yet, show the empty
+    // adoption prompt instead of getting stuck on a loading spinner.
     if (DEBUG_PETS) console.log('[PetsPage] Showing: no profile adoption prompt');
-    return (
-      <>
-        <BreedCategoryPicker
-          onSelectCategory={(cat) => {
-            setSelectedBreedCategory(cat);
-            setAdoptionStep('onboarding');
-            setShowAdoptionFlow(true);
-          }}
-        />
-        <Dialog
-          open={showAdoptionFlow}
-          onOpenChange={(open) => {
-            setShowAdoptionFlow(open);
-            if (!open) {
-              setSelectedBreedCategory(undefined);
-              setAdoptionStep('category');
-            }
-          }}
-        >
-          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto p-0">
-            {adoptionStep === 'category' ? (
-              <BreedCategoryPicker
-                compact
-                onSelectCategory={(cat) => {
-                  setSelectedBreedCategory(cat);
-                  setAdoptionStep('onboarding');
-                }}
-              />
-            ) : (
-              <PetsAdoptionFlowPortal
-                profile={profile ?? null}
-                updateProfileEvent={updateProfileEvent}
-                updateCompanionEvent={updateCompanionEvent}
-                invalidateProfile={invalidateProfile}
-                invalidateCompanion={invalidateCompanion}
-                setStoredSelectedD={setStoredSelectedD}
-                breedCategory={selectedBreedCategory}
-                onComplete={() => setShowAdoptionFlow(false)}
-              />
-            )}
-          </DialogContent>
-        </Dialog>
-      </>
+    content = (
+      <BreedCategoryPicker
+        onSelectCategory={(cat) => {
+          setSelectedBreedCategory(cat);
+          setAdoptionStep('onboarding');
+          setShowAdoptionFlow(true);
+        }}
+      />
     );
-  }
-  
-  // ─── CASE D: Companions still loading ───
-  if (collectionLoading) {
+  } else if (collectionLoading) {
+    // ─── CASE D: Companions still loading ───
     if (DEBUG_PETS) console.log('[PetsPage] Showing: loading companions');
-    return <DashboardLoadingState />;
-  }
-  
-  // ─── CASE E: Companions not yet resolved (fetching) ───
-  if (collectionFetching && companions.length === 0) {
+    content = <DashboardLoadingState />;
+  } else if (collectionFetching && companions.length === 0) {
+    // ─── CASE E: Companions not yet resolved (fetching) ───
     if (DEBUG_PETS) console.log('[PetsPage] Showing: syncing pets from relays');
-    return (
+    content = (
       <DashboardShell>
         <div className="flex-1 flex flex-col items-center justify-center p-6 gap-6">
           <div className="flex flex-col items-center gap-4 text-center max-w-sm">
@@ -974,121 +985,44 @@ function PetsContent() {
         </div>
       </DashboardShell>
     );
-  }
-  
-  // ─── CASE F: No pets events found on relays ───
-  // Show the adoption prompt instead of an error. The user can explicitly
-  // create their first pet; nothing is published automatically.
-  if (companions.length === 0 && !collectionLoading && !collectionFetching) {
+  } else if (companions.length === 0) {
+    // ─── CASE F: No pets events found on relays ───
+    // Show the adoption prompt instead of an error. The user can explicitly
+    // create their first pet; nothing is published automatically.
     if (DEBUG_PETS) console.log('[PetsPage] Showing: no pet adoption prompt');
-    return (
-      <>
-        <BreedCategoryPicker
-          onSelectCategory={(cat) => {
-            setSelectedBreedCategory(cat);
-            setAdoptionStep('onboarding');
-            setShowAdoptionFlow(true);
-          }}
-        />
-        <Dialog
-          open={showAdoptionFlow}
-          onOpenChange={(open) => {
-            setShowAdoptionFlow(open);
-            if (!open) {
-              setSelectedBreedCategory(undefined);
-              setAdoptionStep('category');
-            }
-          }}
-        >
-          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto p-0">
-            {adoptionStep === 'category' ? (
-              <BreedCategoryPicker
-                compact
-                onSelectCategory={(cat) => {
-                  setSelectedBreedCategory(cat);
-                  setAdoptionStep('onboarding');
-                }}
-              />
-            ) : (
-              <PetsAdoptionFlowPortal
-                profile={profile ?? null}
-                updateProfileEvent={updateProfileEvent}
-                updateCompanionEvent={updateCompanionEvent}
-                invalidateProfile={invalidateProfile}
-                invalidateCompanion={invalidateCompanion}
-                setStoredSelectedD={setStoredSelectedD}
-                breedCategory={selectedBreedCategory}
-                onComplete={() => setShowAdoptionFlow(false)}
-              />
-            )}
-          </DialogContent>
-        </Dialog>
-      </>
+    content = (
+      <BreedCategoryPicker
+        onSelectCategory={(cat) => {
+          setSelectedBreedCategory(cat);
+          setAdoptionStep('onboarding');
+          setShowAdoptionFlow(true);
+        }}
+      />
     );
-  }
-  
-  // ─── CASE G/H: No valid selection or companion not resolved ───
-  // Show selector to pick which pet to display
-  if (!selectedD || !companion) {
+  } else if (!selectedD || !companion) {
+    // ─── CASE G/H: No valid selection or companion not resolved ───
+    // Show selector to pick which pet to display
     if (DEBUG_PETS) console.log('[PetsPage] Showing: pet selector');
-    return (
-      <>
-        <PetsSelectorPage
-          companions={filteredCompanions}
-          onSelect={handleSelectPets}
-          isLoading={companionFetching}
-          onAdopt={() => {
-            setSelectedBreedCategory(undefined);
-            setAdoptionStep('category');
-            setShowAdoptionFlow(true);
-          }}
-          currentCompanion={profile?.currentCompanion}
-        />
-        
-        {/* Adoption Flow Modal */}
-        <Dialog
-          open={showAdoptionFlow}
-          onOpenChange={(open) => {
-            setShowAdoptionFlow(open);
-            if (!open) {
-              setSelectedBreedCategory(undefined);
-              setAdoptionStep('category');
-            }
-          }}
-        >
-          <DialogContent className="max-w-lg max-h-[90vh] overflow-y-auto p-0">
-            {adoptionStep === 'category' ? (
-              <BreedCategoryPicker
-                compact
-                onSelectCategory={(cat) => {
-                  setSelectedBreedCategory(cat);
-                  setAdoptionStep('onboarding');
-                }}
-              />
-            ) : (
-              <PetsAdoptionFlowPortal
-                profile={profile ?? null}
-                updateProfileEvent={updateProfileEvent}
-                updateCompanionEvent={updateCompanionEvent}
-                invalidateProfile={invalidateProfile}
-                invalidateCompanion={invalidateCompanion}
-                setStoredSelectedD={setStoredSelectedD}
-                breedCategory={selectedBreedCategory}
-                onComplete={() => setShowAdoptionFlow(false)}
-              />
-            )}
-          </DialogContent>
-        </Dialog>
-      </>
+    content = (
+      <PetsSelectorPage
+        companions={filteredCompanions}
+        onSelect={handleSelectPets}
+        isLoading={companionFetching}
+        onAdopt={() => {
+          setSelectedBreedCategory(undefined);
+          setAdoptionStep('category');
+          setShowAdoptionFlow(true);
+        }}
+        currentCompanion={profile?.currentCompanion}
+      />
     );
-  }
-  
-  // ─── CASE I: Everything ready - show dashboard ───
-  // At this point: companion is PetsCompanion, selectedD is string (narrowed by Case H guard)
-  // Note: Item use registration is handled by usePetsActionsRegistration hook above
-  if (DEBUG_PETS) console.log('[PetsPage] Showing: dashboard');
-  return (
-    <PetsDashboard
+  } else {
+    // ─── CASE I: Everything ready - show dashboard ───
+    // At this point: companion is PetsCompanion, selectedD is string (narrowed by Case H guard)
+    // Note: Item use registration is handled by usePetsActionsRegistration hook above
+    if (DEBUG_PETS) console.log('[PetsPage] Showing: dashboard');
+    content = (
+      <PetsDashboard
       companion={companion}
       companions={filteredCompanions}
       selectedD={selectedD}
@@ -1099,6 +1033,7 @@ function PetsContent() {
       isUsingItem={isUsingItem}
       purchaseItem={purchaseItem}
       petsWallet={petsWallet}
+      petsWalletMode={petsWalletResult.mode}
       isDirectActionPending={isDirectActionPending}
       actionInProgress={actionInProgress}
       isPublishing={isPublishing}
@@ -1119,6 +1054,17 @@ function PetsContent() {
       onDevEditorApply={handleDevEditorApply}
       isDevUpdating={isDevUpdating}
     />
+    );
+  }
+
+  // Single return for every dashboard state: the adoption/hatching dialog is
+  // always the last child, so React preserves it (and any in-flight ceremony)
+  // when `content` switches between states mid-flow.
+  return (
+    <>
+      {content}
+      {adoptionFlowDialog}
+    </>
   );
 }
 
@@ -1164,6 +1110,7 @@ interface PetsDashboardProps {
   isUsingItem: boolean;
   purchaseItem: (req: { itemId: string; price: number; quantity: number; currency?: 'fiat' | 'sats' }) => Promise<unknown>;
   petsWallet: (CashuWalletState & CashuWalletActions) | null | undefined;
+  petsWalletMode: PetsWalletMode;
   isDirectActionPending: boolean;
   actionInProgress: string | null;
   isPublishing: boolean;
@@ -1207,6 +1154,7 @@ function PetsDashboard({
   isUsingItem,
   purchaseItem,
   petsWallet,
+  petsWalletMode,
   isDirectActionPending,
   actionInProgress,
   isPublishing,
@@ -1927,12 +1875,28 @@ function PetsDashboard({
   const pendingPoopSatsRef = useRef(0);
   const poopSatsTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Clear any pending poop-sats timer on unmount to avoid leaking a setTimeout
-  // and (if it fired late) updating profile state after this dashboard is gone.
+  // Flush helper: publish any accumulated poop-cleanup sats exactly once.
+  // Kept in a ref so both the debounce timer and the unmount path use it —
+  // the reward is toasted immediately, so it must never be silently dropped.
+  const flushPoopSatsRef = useRef<() => void>(() => {});
+  flushPoopSatsRef.current = () => {
+    const satsToAdd = pendingPoopSatsRef.current;
+    pendingPoopSatsRef.current = 0;
+    if (satsToAdd <= 0 || !user?.pubkey) return;
+
+    addProfileSats(nostr, publishEvent, user.pubkey, satsToAdd)
+      .then(({ event }) => updateProfileEvent(event))
+      .catch((error) => console.error('Failed to persist poop cleanup sats:', error));
+  };
+
+  // On unmount, flush pending poop sats instead of dropping them: the user
+  // was already shown the "+N sats" toast, so clearing the timer without
+  // publishing would desync the display from the profile ledger.
   useEffect(() => () => {
     if (poopSatsTimerRef.current) {
       clearTimeout(poopSatsTimerRef.current);
       poopSatsTimerRef.current = null;
+      flushPoopSatsRef.current();
     }
   }, []);
 
@@ -1942,19 +1906,11 @@ function PetsDashboard({
 
     // Debounce: wait 1.5s after last pickup, then publish all accumulated sats
     if (poopSatsTimerRef.current) clearTimeout(poopSatsTimerRef.current);
-    poopSatsTimerRef.current = setTimeout(async () => {
-      const satsToAdd = pendingPoopSatsRef.current;
-      pendingPoopSatsRef.current = 0;
-      if (satsToAdd <= 0 || !user?.pubkey) return;
-
-      try {
-        const { event } = await addProfileSats(nostr, publishEvent, user.pubkey, satsToAdd);
-        updateProfileEvent(event);
-      } catch (error) {
-        console.error('Failed to persist poop cleanup sats:', error);
-      }
+    poopSatsTimerRef.current = setTimeout(() => {
+      poopSatsTimerRef.current = null;
+      flushPoopSatsRef.current();
     }, 1500);
-  }, [nostr, publishEvent, updateProfileEvent, user?.pubkey]);
+  }, []);
 
   // Shared timer ref for temporary action-emotion cleanup.
   // Used across the current feeding/item interaction paths so older timers
@@ -2366,7 +2322,7 @@ function PetsDashboard({
                   isHatching={isHatching || showHatchCeremony}
                   onEvolve={async () => setShowEvolveCeremony(true)}
                   isEvolving={isEvolving || showEvolveCeremony}
-                  isMainnetWallet={profile?.walletMode === 'cashu'}
+                  isMainnetWallet={petsWalletMode === 'cashu'}
                   onStopIncubation={handleStopIncubation}
                   isStoppingIncubation={isStoppingIncubation}
                   onStopEvolution={handleStopEvolution}
@@ -2425,6 +2381,8 @@ function PetsDashboard({
               {activeDrawer === 'wallet' && (
                 <div className="flex-1 min-h-0">
                   <PetsWalletDrawer
+                    profile={profile ?? null}
+                    companion={companion}
                     onModeChange={async (mode) => {
                       if (!user?.pubkey || !profile) return;
                       try {
@@ -3981,10 +3939,32 @@ function SpeciesTabContent({ companion }: SpeciesTabContentProps) {
             );
           }
 
+          // Buzz tiles use the animated WebP directly instead of an SVG string.
+          if (activeCategory === 'buzz') {
+            return (
+              <div
+                key={getMemberAssetId(member)}
+                className="flex flex-col items-center gap-1 rounded-xl border p-2 bg-card/50"
+              >
+                <div className="relative w-14 h-14 sm:w-16 sm:h-16 rounded-lg overflow-hidden bg-muted/40">
+                  <img
+                    src={getBuzzPetAnimatedUrl(getMemberAssetId(member))}
+                    alt={member.label}
+                    className="w-full h-full object-contain"
+                    loading="lazy"
+                  />
+                </div>
+                <span className="text-[10px] font-medium text-muted-foreground">
+                  {member.label}
+                </span>
+              </div>
+            );
+          }
+
           const svg = isAdultFormMember(member)
             ? getAdultBaseSvg(member.form)
             : (() => {
-                const recipe = getBaoRecipeById(member.recipeId ?? member.id);
+                const recipe = getBaoRecipeById(getMemberAssetId(member));
                 return recipe ? generateBaoSvg(recipe) : '';
               })();
 

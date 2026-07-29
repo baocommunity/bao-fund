@@ -1,7 +1,7 @@
 {
-  "name": "2140",
-  "short_name": "2140",
-  "description": "Bitcoin culture collective built on Nostr — art, events, and community.",
+  "name": "₿AO Fund",
+  "short_name": "₿AO Fund",
+  "description": "Encrypted agentic chat and milestone fundraising on Nostr — with Nostr Pets.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#000000",
@@ -30,12 +30,6 @@
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "maskable"
-    },
-    {
-      "src": "/logo.jpg",
-      "sizes": "200x200",
-      "type": "image/jpeg",
-      "purpose": "any"
     }
   ],
   "prefer_related_applications": false
