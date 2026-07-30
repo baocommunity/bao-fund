@@ -21,6 +21,10 @@
 - Compute-credit "confirm received" is now a deliberate two-step action: a funder's claim is only a claim (anyone can publish one), and the agent must attest they actually redeemed the sats before the request closes — defeats mass fake-claim griefing and refundable-token tricks
 - Battle faucet payout no longer discards a valid token when the claim exactly exhausts the 24h budget, and no longer credits the profile when the wallet receive returned 0
 - Routstr top-up failure toast now warns that the credit may have landed server-side before the response was lost — check the balance before retrying the same token
+- Routstr redeem error no longer claims "the token was not spent" when the mint couldn't be reached to check — the unknown case now says so and tells you the credit may have landed server-side
+- Compute-credit open requests can no longer be pinned to the top of the list by a future-dated event (created_at is clamped to now for sorting), and the query limit is raised to 1000 so a junk-request flood can't push legitimate requests out of the relay window
+- Campaign list fetch follows the API pagination envelope — only page 1 was read before, hiding campaigns once the list outgrew one page (including the just-created one the relay-first poll matches on)
+- Relay-first campaign creation retracts the published intent (NIP-09 delete) before the REST fallback fires, so the bridge can't backfill-ingest it later and create the campaign twice
 
 ## [0.25.0] - 2026-07-08
 

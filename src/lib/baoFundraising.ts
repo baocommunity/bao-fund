@@ -182,9 +182,21 @@ interface ListEnvelope<T> {
 }
 
 export async function fetchFundraisers(status?: string): Promise<BaoFundraiser[]> {
-  const q = status ? `?status=${encodeURIComponent(status)}` : '';
-  const res = await apiFetch<ListEnvelope<BaoFundraiser[]>>(`/v1/fundraisers${q}`);
-  return res.data;
+  // Follow the pagination envelope: the default page is small, and silently
+  // reading only page 1 hides campaigns once the list outgrows it — including
+  // the one just created (the relay-first create poll matches on this list).
+  const out: BaoFundraiser[] = [];
+  let offset = 0;
+  const limit = 100;
+  for (let page = 0; page < 20; page++) {
+    const params = new URLSearchParams({ limit: String(limit), offset: String(offset) });
+    if (status) params.set('status', status);
+    const res = await apiFetch<ListEnvelope<BaoFundraiser[]>>(`/v1/fundraisers?${params}`);
+    out.push(...res.data);
+    if (!res.pagination?.has_more || res.data.length === 0) break;
+    offset += res.data.length;
+  }
+  return out;
 }
 
 export async function fetchFundraiser(id: string): Promise<{ fundraiser: BaoFundraiser; milestones: BaoMilestone[] }> {
@@ -300,6 +312,24 @@ export async function createFundraiserRelayFirst(
     });
     const found = await pollForRelayCreatedFundraiser(intent.id, opts);
     if (found) return { result: found, via: 'relay' };
+
+    // The intent IS on the relay but the bridge didn't ingest it in time.
+    // Falling through to REST would risk a duplicate: the bridge's backfill
+    // scan can still find the intent later and create the campaign a second
+    // time. Retract the intent with a NIP-09 delete before the REST route
+    // creates the canonical copy (relays drop deleted events from the
+    // backfill window; a bridge that honors deletes skips it too).
+    try {
+      await opts.publish({
+        kind: 5,
+        content: 'retracted: campaign created via REST fallback',
+        tags: [['e', intent.id], ['k', String(BAO_FUNDRAISER_CREATE_KIND)]],
+        relay: baoRelayUrl(),
+      });
+    } catch {
+      // Best effort — a lingering intent risks a duplicate campaign when the
+      // bridge recovers, but blocking the REST fallback is worse.
+    }
   } catch {
     // Relay path unavailable — fall through to the REST route.
   }
