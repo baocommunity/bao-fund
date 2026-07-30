@@ -8,6 +8,11 @@
 ### Fixed
 - Cashu mint URLs with exactly four hostname labels (e.g. a mint on `pay.mint.example.com`) were misclassified as private IP addresses, so tokens from those mints were silently undecodable
 - Re-encoding a received Cashu token double-encoded P2PK witnesses — a latent bug that would have made escrow release tokens unreceivable
+- Battle guest who won a real-sats match could lose the prize entirely: the finish handler fired before the host's signed result arrived, journaled nothing, and never re-fired — the claim is now journaled immediately and fires automatically the moment the signed result lands
+- Battle invites are now bound to the verified DM sender (a throwaway key can no longer spoof a trusted contact's invite), self-battles are rejected, and absurd round durations that could stretch a battle past the escrow refund locktime are refused
+- Compute-credits funding-token outbox no longer leaks the previous account's token to the next user of a shared browser (account switch/logout resets and never writes the shared logged-out key, and the copy is hidden while logged out)
+- Compute-credits Routstr redeem no longer auto-retries a token send after an ambiguous failure (timeout/dropped response), which could double-spend and burn the first attempt's sats — and no longer falsely claims "your sats are safe" in that case
+- Mint URL comparisons no longer lowercase the path (the default Minibits mint's `/Bitcoin` path 404s as `/bitcoin`, which had made its tokens fail spent-state checks)
 
 ## [0.25.0] - 2026-07-08
 
