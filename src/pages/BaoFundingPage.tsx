@@ -155,12 +155,11 @@ export function BaoFundingPage() {
     queryFn: async () => {
       const ids = await Promise.all(
         allFundraisers.map(async (f) => {
-          try {
-            const contributions = await fetchContributions(f.id);
-            return contributions.some((c) => c.contributor_pubkey === user!.pubkey) ? f.id : null;
-          } catch {
-            return null;
-          }
+          // No per-campaign catch: a failed fetch must reject the whole query
+          // (React Query retries and we surface an error below) — swallowing
+          // it would silently report a campaign the user funded as not funded.
+          const contributions = await fetchContributions(f.id);
+          return contributions.some((c) => c.contributor_pubkey === user!.pubkey) ? f.id : null;
         }),
       );
       return new Set(ids.filter((id): id is string => id !== null));
@@ -323,6 +322,12 @@ export function BaoFundingPage() {
               </>
             )}
           </div>
+
+          {funderFilter === 'funded' && fundedByMeQuery.isError && (
+            <p className="text-sm text-destructive">
+              Couldn't load contribution records for the "I funded" filter — check your connection and toggle the filter to retry.
+            </p>
+          )}
 
           {listQuery.isLoading ? (
             <div className="space-y-3">
@@ -587,7 +592,8 @@ function CampaignLinks({ fundraiserId, format }: { fundraiserId: string; format:
 
 // ── Contribute dialog ────────────────────────────────────────────────────────
 
-function ContributeDialog({ fundraiser, onOpenChange, onContributed }: {
+// Exported for regression tests (idempotency key + stale instructions races).
+export function ContributeDialog({ fundraiser, onOpenChange, onContributed }: {
   fundraiser: BaoFundraiser | null;
   onOpenChange: (open: boolean) => void;
   onContributed: () => void;
@@ -597,30 +603,46 @@ function ContributeDialog({ fundraiser, onOpenChange, onContributed }: {
   const [amount, setAmount] = useState('1000');
   const [rail, setRail] = useState<BaoRail>('lightning');
   const [instructions, setInstructions] = useState<Record<string, unknown> | null>(null);
-  // Stable idempotency key per dialog session: a retry after a network
-  // timeout (or an accidental double submit) replays server-side instead of
-  // recording the contribution twice. Regenerated when the dialog closes.
-  const idemKeyRef = useRef<string | null>(null);
+  // Stable idempotency key per campaign: a retry after a network timeout (or
+  // an accidental double submit) replays server-side instead of recording the
+  // contribution twice. Rotated only after a COMPLETED contribution — never
+  // on dialog close, because the natural retry flow after an ambiguous
+  // failure is close → reopen → Contribute again, and minting a fresh key
+  // there would double-record the contribution.
+  const idemKeyRef = useRef<{ fundraiserId: string; key: string } | null>(null);
 
-  // The dialog stays mounted when the parent swaps in a different fundraiser —
-  // reset per-fundraiser state so stale payment instructions from the previous
-  // one never show, and the idempotency key can't replay across fundraisers.
+  // The dialog stays mounted across opens/closes and campaign switches.
+  // Track which campaign is currently open and which one the in-flight
+  // mutation targeted, so a response landing after the user closed the dialog
+  // (or opened a different campaign) can't paint its payment instructions
+  // under the wrong title.
+  const openFundraiserIdRef = useRef<string | null>(null);
+  openFundraiserIdRef.current = fundraiser?.id ?? null;
+  const mutationTargetIdRef = useRef<string | null>(null);
+
+  // Reset the instructions panel when the dialog is reopened, so a previous
+  // session's instructions never leak into a new one.
   const fundraiserId = fundraiser?.id;
   useEffect(() => {
     setInstructions(null);
-    idemKeyRef.current = null;
   }, [fundraiserId]);
 
   const mutation = useMutation({
     mutationFn: () => {
-      if (!idemKeyRef.current) idemKeyRef.current = crypto.randomUUID();
+      if (!idemKeyRef.current || idemKeyRef.current.fundraiserId !== fundraiser!.id) {
+        idemKeyRef.current = { fundraiserId: fundraiser!.id, key: crypto.randomUUID() };
+      }
+      mutationTargetIdRef.current = fundraiser!.id;
       return contributeToFundraiser(user!.signer, fundraiser!.id, {
         amount_sats: parseInt(amount, 10) || 0,
         rail,
-        idempotencyKey: `2140:${fundraiser!.id}:${rail}:${parseInt(amount, 10) || 0}:${idemKeyRef.current}`,
+        idempotencyKey: `2140:${fundraiser!.id}:${rail}:${parseInt(amount, 10) || 0}:${idemKeyRef.current.key}`,
       });
     },
     onSuccess: (data) => {
+      // Server confirmed the contribution — rotate the key so the NEXT
+      // intentional contribution isn't mistaken for a retry of this one.
+      idemKeyRef.current = null;
       if (data.replayed) {
         // Replay responses omit payment_instructions — setting them would
         // blank the dialog back to the funding form after a success toast.
@@ -628,7 +650,11 @@ function ContributeDialog({ fundraiser, onOpenChange, onContributed }: {
         onContributed();
         return;
       }
-      setInstructions(data.payment_instructions as Record<string, unknown>);
+      // Only show the instructions while the dialog is still open on the
+      // campaign this request was for.
+      if (openFundraiserIdRef.current !== null && openFundraiserIdRef.current === mutationTargetIdRef.current) {
+        setInstructions(data.payment_instructions as Record<string, unknown>);
+      }
       toast({ title: 'Contribution recorded (DEMO)' });
       onContributed();
     },
@@ -636,7 +662,7 @@ function ContributeDialog({ fundraiser, onOpenChange, onContributed }: {
   });
 
   const close = (open: boolean) => {
-    if (!open) { setInstructions(null); setAmount('1000'); idemKeyRef.current = null; }
+    if (!open) { setInstructions(null); setAmount('1000'); }
     onOpenChange(open);
   };
 

@@ -82,6 +82,17 @@ export function FundraiserContributions({ fundraiserId }: { fundraiserId: string
     return <Skeleton className="h-16 w-full" />;
   }
 
+  // An error must never render as the empty state — a campaign the funder
+  // knows has contributions showing "No recorded contributions yet" is a
+  // false success (same pattern as PetFundraisingCard).
+  if (query.isError) {
+    return (
+      <p className="text-xs text-muted-foreground flex items-center gap-1.5">
+        <Users className="size-3.5" /> Can't reach the ₿AO Fund demo API right now — contributions couldn't be loaded.
+      </p>
+    );
+  }
+
   const contributions = query.data ?? [];
   if (contributions.length === 0) {
     return (

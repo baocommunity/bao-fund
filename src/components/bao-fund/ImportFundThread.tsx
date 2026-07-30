@@ -216,10 +216,17 @@ export function FundThreadSetup({
   }, [phase, channel, detail]);
 
   // Never hang the dialog: if the fold is slow to materialize the channel,
-  // finish anyway — the community exists and the thread can be retried.
+  // finish anyway — the community exists and the thread can be retried. But
+  // once posting has STARTED, the loop must report its own result: forcing
+  // 'done' mid-loop calls onDone(false) while the posts are still landing
+  // successfully. The long backstop only guards a truly hung publish.
   useEffect(() => {
-    const t = setTimeout(() => setPhase((p) => (p === 'done' ? p : 'done')), 20_000);
-    return () => clearTimeout(t);
+    const t = setTimeout(() => {
+      if (postedRef.current) return;
+      setPhase('done');
+    }, 20_000);
+    const backstop = setTimeout(() => setPhase('done'), 120_000);
+    return () => { clearTimeout(t); clearTimeout(backstop); };
   }, []);
 
   const succeeded = phase === 'done' && resultRef.current;

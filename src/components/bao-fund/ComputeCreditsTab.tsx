@@ -36,7 +36,7 @@ import {
   routstrTopupWithCashu,
 } from '@/lib/routstr';
 import { NUTZAP_INFO_KIND, parseNutzapInfoEvent } from '@/lib/cashu/cashuNip60';
-import { checkTokenProofsSpent, decodeCashuToken } from '@/lib/cashu/cashu';
+import { checkTokenProofsSpent, decodeCashuToken, MAX_MINT_FEE_PPM } from '@/lib/cashu/cashu';
 import { extractTokenLockPubkeys, getTokenAmount } from '@/pets/battle/lib/cashuEscrow';
 import { bytesToHex } from '@noble/curves/utils.js';
 import { nip19 } from 'nostr-tools';
@@ -47,6 +47,7 @@ import { useNostrPublish } from '@/hooks/useNostrPublish';
 import { useToast } from '@/hooks/useToast';
 import { useAuthor } from '@/hooks/useAuthor';
 import { RoutstrExplainer } from './RoutstrExplainer';
+import { creditOutboxStorageKey, hasUnsupportedLockSecrets } from './computeCreditsUtils';
 import { cn } from '@/lib/utils';
 
 function formatSats(n: number): string {
@@ -395,8 +396,9 @@ function OpenRequestCard({ request, claims, onFulfilled }: { request: ComputeCre
   // persists just the change) — if this component unmounts after a DM failure
   // (tab switch, navigation, crash) the sats are gone with the wallet already
   // debited. Keep a localStorage outbox copy until the funder explicitly
-  // discards it (agent confirmed receipt).
-  const outboxKey = `bao_credit_outbox_${request.id}`;
+  // discards it (agent confirmed receipt). Scoped by funder pubkey so account
+  // B on a shared browser never sees or destroys account A's copy.
+  const outboxKey = creditOutboxStorageKey(user?.pubkey, request.id);
   useEffect(() => {
     try {
       const raw = localStorage.getItem(outboxKey);
@@ -683,16 +685,21 @@ function RedeemCard({ myFundedRequests, onReceiptPublished }: {
     refetchInterval: 60_000,
   });
 
-  /** Re-send swept sats as an unlocked token for Routstr (small fee-reserve retry). */
+  /** Re-send swept sats as an unlocked token for Routstr (fee-reserve retry). */
   const resendUnlocked = async (amount: number, mint?: string): Promise<string> => {
     const memo = 'Routstr compute redeem';
     let t = await sendToken(amount, memo, undefined, mint);
     if (!t) {
-      const reserve = Math.max(1, Math.ceil(amount * 0.001));
+      // The reserve must cover the mint's per-proof input fee, which the
+      // wallet tolerates up to MAX_MINT_FEE_PPM (5%) — a 0.1% shave still
+      // failed on high-fee mints or with many small proofs.
+      const reserve = Math.max(2, Math.ceil(amount * (MAX_MINT_FEE_PPM / 1_000_000)));
       if (amount - reserve > 0) t = await sendToken(amount - reserve, memo, undefined, mint);
     }
     if (!t) {
-      throw new Error(`Swept ${formatSats(amount)} sats to your wallet but couldn't prepare the Routstr token — your sats are safe in your wallet. Retry the redeem.`);
+      // The original token is already marked processed by the sweep, so
+      // "retry the redeem" can never work — name the path that does.
+      throw new Error(`Swept ${formatSats(amount)} sats to your wallet but couldn't prepare the Routstr token — your sats are safe in your wallet. Send yourself a fresh token from the Wallet tab and redeem that instead (re-pasting the original token won't work — it's already swept).`);
     }
     return t;
   };
@@ -717,13 +724,21 @@ function RedeemCard({ myFundedRequests, onReceiptPublished }: {
       // the mint which situation we are actually in before promising anything.
       const spent = await checkTokenProofsSpent(unlocked);
       if (spent === true) {
+        // "Spent" can't distinguish Routstr's spend from OUR OWN receive-back
+        // that swapped at the mint but failed afterwards (proofs sitting in
+        // the wallet's proof-recovery journal). Name both — telling the user
+        // the sats are at Routstr when they're actually in their own journal
+        // sends them chasing a balance that doesn't exist.
         throw new Error(
-          `Routstr redeem failed (${msg}), and the mint confirms the token was already redeemed — Routstr created a balance but its response never reached you. ` +
-            'The sats are NOT back in your wallet. Keep this token and contact Routstr support so they can recover the API key for the balance it created.',
+          `Routstr redeem failed (${msg}), and the mint confirms the token is already spent. Either Routstr created a balance but its response never reached you (keep this token and contact Routstr support to recover the API key), or your own wallet received it and the proofs are in its recovery journal — restart the app or check the Wallet tab to reconcile. The sats are NOT in your spendable balance.`,
         );
       }
+      // The proofs were NOT spent. The journal claim must be honest:
+      // receiveToken bails BEFORE journaling when the wallet isn't set up or
+      // the token won't decode, so promise the journal only as a possibility
+      // and point at the token copy that definitely still exists.
       throw new Error(
-        `Routstr redeem failed (${msg}). The token is saved in your wallet's recovery journal and the wallet keeps retrying it in the background; it also stays in the input above as a backup. Retry the redeem when Routstr is back.`,
+        `Routstr redeem failed (${msg}). The token was not spent — keep the token above as a backup and retry the redeem when Routstr is back. If your wallet is set up, it also holds the token in its recovery journal and keeps retrying it in the background.`,
       );
     }
   };
@@ -747,6 +762,14 @@ function RedeemCard({ myFundedRequests, onReceiptPublished }: {
       const faceSats = getTokenAmount(raw);
 
       if (locks.length === 0) {
+        // No extractable locks. That means bearer ONLY if no proof carries a
+        // lock-shaped secret we can't parse (tagged P2PK, HTLC, …) — those
+        // are rejected by the mint's unsigned split at Routstr and the
+        // receive-back can't sign for them, so refuse up front instead of
+        // misrouting the token.
+        if (hasUnsupportedLockSecrets(raw)) {
+          throw new Error('This token is locked with a scheme this app can\'t parse (e.g. P2PK with locktime/refund tags, or an HTLC) — it was NOT sent anywhere. Sweep it with Cashu tooling that supports the lock, then redeem the resulting unlocked token here.');
+        }
         // Bearer token — straight to Routstr.
         const res = await redeemUnlocked(raw);
         return { ...res, sats: faceSats };
