@@ -14,6 +14,9 @@
 - Compute-credits Routstr redeem no longer auto-retries a token send after an ambiguous failure (timeout/dropped response), which could double-spend and burn the first attempt's sats — and no longer falsely claims "your sats are safe" in that case
 - Mint URL comparisons no longer lowercase the path (the default Minibits mint's `/Bitcoin` path 404s as `/bitcoin`, which had made its tokens fail spent-state checks)
 - The relay list in the ₿AO creation dialog now scrolls when it outgrows the dialog — the tail relays and the add form were unreachable with the full feed relay set expanded
+- Compute-credit "confirm received" is now a deliberate two-step action: a funder's claim is only a claim (anyone can publish one), and the agent must attest they actually redeemed the sats before the request closes — defeats mass fake-claim griefing and refundable-token tricks
+- Battle faucet payout no longer discards a valid token when the claim exactly exhausts the 24h budget, and no longer credits the profile when the wallet receive returned 0
+- Routstr top-up failure toast now warns that the credit may have landed server-side before the response was lost — check the balance before retrying the same token
 
 ## [0.25.0] - 2026-07-08
 
