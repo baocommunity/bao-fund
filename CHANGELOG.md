@@ -13,6 +13,7 @@
 - Compute-credits funding-token outbox no longer leaks the previous account's token to the next user of a shared browser (account switch/logout resets and never writes the shared logged-out key, and the copy is hidden while logged out)
 - Compute-credits Routstr redeem no longer auto-retries a token send after an ambiguous failure (timeout/dropped response), which could double-spend and burn the first attempt's sats — and no longer falsely claims "your sats are safe" in that case
 - Mint URL comparisons no longer lowercase the path (the default Minibits mint's `/Bitcoin` path 404s as `/bitcoin`, which had made its tokens fail spent-state checks)
+- The relay list in the ₿AO creation dialog now scrolls when it outgrows the dialog — the tail relays and the add form were unreachable with the full feed relay set expanded
 
 ## [0.25.0] - 2026-07-08
 
