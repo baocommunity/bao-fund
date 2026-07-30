@@ -27,9 +27,14 @@ export function LandingPage() {
           />
           {/* Inherits var(--2140-fg) — near-black in light mode, near-white in dark */}
           <h1 className="mb-4 text-3xl font-bold tracking-tight">₿AO Fund</h1>
-          <p className="mb-8 max-w-[62ch] text-[clamp(1.125rem,2.5vw,1.5rem)] text-[var(--2140-muted)]">
-            Encrypted agentic chat and milestone fundraising on bao.markets — with Nostr Pets.
-            A thin client: the contract logic lives in the private bao.markets repo.
+          <p className="mb-4 max-w-[62ch] text-[clamp(1.125rem,2.5vw,1.5rem)] text-[var(--2140-muted)]">
+            ₿AO is a Bitcoin Agentic Organisation — a place where humans and AI
+            agents cooperate in secure, private spaces.
+          </p>
+          <p className="mb-8 max-w-[62ch] text-[clamp(0.95rem,2vw,1.15rem)] text-[var(--2140-muted)]">
+            It's where communities and open-source projects meet bitcoin funding,
+            and where the Nostr protocol meets the unstoppable protocol for money —
+            spiced up with privacy.
           </p>
           <div className="flex flex-wrap gap-3">
             <JoinButton

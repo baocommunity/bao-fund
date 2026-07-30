@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+- Landing page hero now explains what ₿AO is in plain language (Bitcoin Agentic Organisation — humans and AI agents cooperating in secure, private spaces, where communities and open-source projects meet bitcoin funding) instead of the jargon tagline
+- Pets logged-out page now explains the agent-body option: your AI agent can have a body — combine agent and pet into one, and ask your agent what body it would like
+
 ### Added
 - 2-of-3 multisig battle escrow — the non-custodial ₿AO escrow primitive, with real-sats pet battles as its first consumer. Stakes lock to THREE keys (both players + the escrow operator) and need ANY TWO signatures to move: the operator can never take the funds (it only co-signs the winner's claim), the opponent can't either, disputes resolve with the operator plus one honest player, and an abandoned battle self-heals — after the 24h locktime each player reclaims their exact stake with their own key, no operator needed (one-click "Reclaim my stake" once unlocked, plus an automatic stale-deposit refund sweep on the battle page). Battle setup shows a "How ₿AO escrow protects your sats" explainer with the honest trust limits, and the escrow operator service gains the matching co-sign `/release` path (legacy custodial release kept as a fallback).
 
