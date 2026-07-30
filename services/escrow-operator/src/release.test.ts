@@ -7,7 +7,7 @@ import { processEscrowRelease, ReleaseError } from './release.js';
 import { decodeToken, getMultisigDepositInfo } from './cashu.js';
 import { cosignMultisigProofs } from './cashuOperations.js';
 import type { DecodedTokenEntry } from './types.js';
-import type { FinishedEvent } from './nostr.js';
+import type { AttestationEvent } from './nostr.js';
 
 const operatorPubkey = 'aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899';
 const hostPubkey = '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff';
@@ -27,17 +27,17 @@ function lockedToken(which: 'host' | 'guest'): string {
   return `locked-${which}`;
 }
 
-function mockFinishedEvent(): FinishedEvent {
+function mockAttestation(pubkey: string): AttestationEvent {
   return {
-    id: 'event-id',
-    pubkey: 'host-nostr-pubkey',
+    id: `attestation-${pubkey.slice(0, 8)}`,
+    pubkey,
     kind: 21124,
     created_at: 1,
     tags: [
       ['e', 'battle-123'],
-      ['t', 'battle-sync'],
+      ['t', 'battle-attestation'],
     ],
-    content: 'encrypted',
+    content: 'nip44-encrypted-to-operator',
     sig: 'sig',
   };
 }
@@ -47,7 +47,7 @@ function mockDeps(overrides: Partial<Parameters<typeof processEscrowRelease>[1]>
   return {
     escrowPrivkey: '0011'.repeat(16),
     escrowPubkey: operatorPubkey,
-    verifyFinishedEvent: () => true,
+    verifyAttestationPair: () => ({ ok: true as const, winner: 0 as const }),
     decodeToken: (tokenStr: string): DecodedTokenEntry[] => {
       return [
         {
@@ -78,7 +78,8 @@ function baseArgs(winner = hostPubkey): Parameters<typeof processEscrowRelease>[
     guestEscrowPubkey: guestPubkey,
     hostDepositToken: lockedToken('host'),
     guestDepositToken: lockedToken('guest'),
-    finishedEvent: mockFinishedEvent(),
+    hostAttestation: mockAttestation('host-nostr-pubkey'),
+    guestAttestation: mockAttestation('guest-nostr-pubkey'),
   };
 }
 
@@ -89,7 +90,8 @@ describe('processEscrowRelease', () => {
   });
 
   it('returns a token locked to the guest winner', async () => {
-    const result = await processEscrowRelease(baseArgs(guestPubkey), mockDeps());
+    const deps = mockDeps({ verifyAttestationPair: () => ({ ok: true as const, winner: 1 as const }) });
+    const result = await processEscrowRelease(baseArgs(guestPubkey), deps);
     expect(decodedSecret(result.token)).toContain(`sent-to-${guestPubkey}`);
   });
 
@@ -99,9 +101,22 @@ describe('processEscrowRelease', () => {
     ).rejects.toBeInstanceOf(ReleaseError);
   });
 
-  it('rejects an invalid battle-finished event', async () => {
-    const deps = mockDeps({ verifyFinishedEvent: () => false });
-    await expect(processEscrowRelease(baseArgs(), deps)).rejects.toBeInstanceOf(ReleaseError);
+  it('rejects when the attestations disagree on the winner', async () => {
+    // The client watches for /disagree/i to discard a griefing opponent
+    // attestation and retry with another one — keep the wording stable.
+    const deps = mockDeps({
+      verifyAttestationPair: () => ({ ok: false as const, reason: 'Attestations disagree on the winner' }),
+    });
+    await expect(processEscrowRelease(baseArgs(), deps)).rejects.toThrow(/disagree/i);
+  });
+
+  it('rejects when the claimed winnerPubkey is not the attested winner', async () => {
+    // The attestations say the GUEST won; the host still must not be able to
+    // pull the pot by naming itself as winnerPubkey.
+    const deps = mockDeps({ verifyAttestationPair: () => ({ ok: true as const, winner: 1 as const }) });
+    await expect(processEscrowRelease(baseArgs(hostPubkey), deps)).rejects.toThrow(
+      /does not match the attested outcome/i,
+    );
   });
 
   it('rejects a host deposit token not locked to escrow', async () => {
@@ -147,6 +162,7 @@ describe('processEscrowRelease', () => {
     let sentAmount = 0;
     let sentRecipient = '';
     const deps = mockDeps({
+      verifyAttestationPair: () => ({ ok: true as const, winner: 1 as const }),
       receive: async () => [proof('received', 13)],
       send: async (_mintUrl: string, amount: number, _proofs: Proof[], recipientPubkey: string) => {
         sentAmount = amount;

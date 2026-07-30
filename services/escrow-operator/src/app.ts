@@ -3,7 +3,7 @@ import type { EscrowConfig } from './config.js';
 import { releaseBodySchema } from './schemas.js';
 import { processEscrowRelease, ReleaseError } from './release.js';
 import { receiveTokenEntry, sendLockedToken, cosignMultisigProofs } from './cashuOperations.js';
-import { verifyFinishedEvent } from './nostr.js';
+import { verifyAttestationPair } from './nostr.js';
 import { decodeToken, isTokenLockedToPubkey, getMultisigDepositInfo } from './cashu.js';
 
 export function buildApp(config: EscrowConfig): express.Express {
@@ -28,7 +28,8 @@ export function buildApp(config: EscrowConfig): express.Express {
       const result = await processEscrowRelease(parse.data, {
         escrowPrivkey: config.escrowPrivkey,
         escrowPubkey: config.escrowPubkey,
-        verifyFinishedEvent,
+        verifyAttestationPair: (hostAttestation, guestAttestation, ctx) =>
+          verifyAttestationPair(hostAttestation, guestAttestation, ctx, config.escrowPrivkey),
         decodeToken,
         isTokenLockedToPubkey,
         receive: receiveTokenEntry,

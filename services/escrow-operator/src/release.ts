@@ -1,7 +1,7 @@
 import type { Proof } from '@cashu/cashu-ts';
 import type { DecodedTokenEntry } from './types.js';
 import { encodeSingleMintToken, sumProofAmounts, toXOnlyPubkey, type ParsedP2PKLock } from './cashu.js';
-import type { FinishedEvent } from './nostr.js';
+import type { AttestationContext, AttestationEvent, AttestationVerification } from './nostr.js';
 
 export interface ReleaseArgs {
   battleId: string;
@@ -10,13 +10,18 @@ export interface ReleaseArgs {
   guestEscrowPubkey: string;
   hostDepositToken: string;
   guestDepositToken: string;
-  finishedEvent: FinishedEvent;
+  hostAttestation: AttestationEvent;
+  guestAttestation: AttestationEvent;
 }
 
 export interface ReleaseDeps {
   escrowPrivkey: string;
   escrowPubkey: string;
-  verifyFinishedEvent: (event: FinishedEvent, battleId: string) => boolean;
+  verifyAttestationPair: (
+    hostAttestation: AttestationEvent,
+    guestAttestation: AttestationEvent,
+    ctx: AttestationContext,
+  ) => AttestationVerification;
   decodeToken: (tokenStr: string) => DecodedTokenEntry[];
   isTokenLockedToPubkey: (tokenStr: string, pubkey: string) => boolean;
   receive: (mintUrl: string, entryToken: string, privkey: string) => Promise<Proof[]>;
@@ -58,7 +63,9 @@ export const OPERATOR_SIGN_MIN_LOCKTIME_MARGIN_SECONDS = 60 * 60;
  * Operator-side escrow release logic.
  *
  * 1. Verify the winner is one of the two escrow pubkeys.
- * 2. Verify the signed battle-finished event.
+ * 2. Verify BOTH players' result attestations decrypt, are bound to the
+ *    escrow keys named in the deposit locks, and AGREE on the winner — and
+ *    that the claimed winnerPubkey matches the attested outcome.
  * 3a. MULTISIG (2-of-3) deposits: validate both locks, co-sign, return the
  *     witnessed proofs — the operator never takes custody of the funds.
  * 3b. LEGACY (single-key custodial) deposits: receive both tokens using the
@@ -78,8 +85,21 @@ export async function processEscrowRelease(
     );
   }
 
-  if (!deps.verifyFinishedEvent(args.finishedEvent, args.battleId)) {
-    throw new ReleaseError('Invalid or unauthorized battle-finished event', 400);
+  const outcome = deps.verifyAttestationPair(args.hostAttestation, args.guestAttestation, {
+    battleId: args.battleId,
+    hostEscrowPubkey: args.hostEscrowPubkey,
+    guestEscrowPubkey: args.guestEscrowPubkey,
+  });
+  if (!outcome.ok) {
+    throw new ReleaseError(outcome.reason, 400);
+  }
+  // The claimer must BE the attested winner — nobody can pull the pot for a
+  // third key, and the loser cannot claim "for" the winner either.
+  const attestedWinnerPubkey = outcome.winner === 0 ? args.hostEscrowPubkey : args.guestEscrowPubkey;
+  if (
+    toXOnlyPubkey(args.winnerPubkey) !== toXOnlyPubkey(attestedWinnerPubkey)
+  ) {
+    throw new ReleaseError('winnerPubkey does not match the attested outcome', 400);
   }
 
   const hostMultisig = deps.getMultisigDepositInfo(args.hostDepositToken);
