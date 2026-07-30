@@ -2,9 +2,9 @@ import express from 'express';
 import type { EscrowConfig } from './config.js';
 import { releaseBodySchema } from './schemas.js';
 import { processEscrowRelease, ReleaseError } from './release.js';
-import { receiveTokenEntry, sendLockedToken } from './cashuOperations.js';
+import { receiveTokenEntry, sendLockedToken, cosignMultisigProofs } from './cashuOperations.js';
 import { verifyFinishedEvent } from './nostr.js';
-import { decodeToken, isTokenLockedToPubkey } from './cashu.js';
+import { decodeToken, isTokenLockedToPubkey, getMultisigDepositInfo } from './cashu.js';
 
 export function buildApp(config: EscrowConfig): express.Express {
   const app = express();
@@ -33,6 +33,8 @@ export function buildApp(config: EscrowConfig): express.Express {
         isTokenLockedToPubkey,
         receive: receiveTokenEntry,
         send: sendLockedToken,
+        getMultisigDepositInfo,
+        cosignProofs: (proofs) => cosignMultisigProofs(proofs, config.escrowPrivkey),
       });
       res.json(result);
     } catch (err) {

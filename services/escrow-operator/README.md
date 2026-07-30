@@ -2,10 +2,22 @@
 
 A tiny Node/Express service that operates the real-sats escrow for 2140 Pets battles.
 
-Both players lock their stake as a Cashu P2PK token to the operator's pubkey. The
-host publishes a signed kind 21124 `battle-finished` event. This service verifies
-that event, receives both locked tokens with the operator's private key, and
-returns a new Cashu token locked to the winner's escrow pubkey.
+**Current protocol — 2-of-3 multisig (non-custodial).** Each player locks their
+stake to THREE keys — host, guest and operator — with any TWO signatures
+required to move it, plus a 24h timelocked refund to the depositor's own key.
+The host publishes a signed kind 21124 `battle-finished` event. This service
+verifies that event, validates both multisig locks (exact {host, guest,
+operator} key set, 2 required signatures, depositor-only refund key, locktime
+at least 1h out), then simply CO-SIGNS every deposit proof and returns the
+combined witnessed token. The funds never pass through the operator's wallet —
+the winner's own key provides the second signature when they receive the token.
+If a battle is abandoned, each depositor reclaims their exact stake with their
+refund key after the locktime — no operator needed.
+
+**Legacy protocol — single-key custodial (fallback).** Deposits locked to the
+operator's pubkey alone are still supported: the service receives both locked
+tokens with the operator's private key and returns a new Cashu token locked to
+the winner's escrow pubkey. New clients should always use the multisig flow.
 
 ## Environment variables
 
@@ -30,8 +42,8 @@ returns a new Cashu token locked to the winner's escrow pubkey.
       "finishedEvent": { "id": "...", "pubkey": "...", "kind": 21124, "created_at": 0, "tags": [["e", "battleId"], ["t", "battle-sync"]], "content": "...", "sig": "..." }
     }
     ```
-  - Success: `{ "token": "cashuA..." }` locked to `winnerPubkey`.
-  - Failure: `{ "error": "..." }` with a 4xx/5xx status.
+  - Success: `{ "token": "cashuA..." }` — for multisig deposits, the combined deposit proofs carrying the operator's witness signature (the winner adds theirs at receive); for legacy deposits, a fresh token locked to `winnerPubkey`.
+  - Failure: `{ "error": "..." }` with a 4xx/5xx status. A deposit inside the 1h refund-locktime margin is refused — use the refund path instead.
 
 ## Local development
 

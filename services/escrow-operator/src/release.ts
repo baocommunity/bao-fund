@@ -1,6 +1,6 @@
 import type { Proof } from '@cashu/cashu-ts';
 import type { DecodedTokenEntry } from './types.js';
-import { encodeSingleMintToken, sumProofAmounts } from './cashu.js';
+import { encodeSingleMintToken, sumProofAmounts, toXOnlyPubkey, type ParsedP2PKLock } from './cashu.js';
 import type { FinishedEvent } from './nostr.js';
 
 export interface ReleaseArgs {
@@ -26,6 +26,10 @@ export interface ReleaseDeps {
     proofs: Proof[],
     recipientPubkey: string,
   ) => Promise<{ send: Proof[]; keep: Proof[] }>;
+  /** 2-of-3 multisig: describe a deposit's uniform multisig lock (null = not multisig). */
+  getMultisigDepositInfo: (tokenStr: string) => ParsedP2PKLock | null;
+  /** 2-of-3 multisig: append the operator's witness signature to each proof. */
+  cosignProofs: (proofs: Proof[]) => Proof[];
 }
 
 export interface ReleaseResult {
@@ -43,13 +47,22 @@ export class ReleaseError extends Error {
 }
 
 /**
+ * The operator refuses to co-sign this close to a deposit's refund locktime.
+ * Inside the margin a release could race a depositor's refund and leave the
+ * winner holding an unspendable token — near the locktime the correct outcome
+ * is simply that both depositors reclaim via the refund path.
+ */
+export const OPERATOR_SIGN_MIN_LOCKTIME_MARGIN_SECONDS = 60 * 60;
+
+/**
  * Operator-side escrow release logic.
  *
  * 1. Verify the winner is one of the two escrow pubkeys.
  * 2. Verify the signed battle-finished event.
- * 3. Verify both deposit tokens are P2PK-locked to the operator.
- * 4. Receive both tokens using the operator private key.
- * 5. Send the combined value to the winner as a new P2PK-locked token.
+ * 3a. MULTISIG (2-of-3) deposits: validate both locks, co-sign, return the
+ *     witnessed proofs — the operator never takes custody of the funds.
+ * 3b. LEGACY (single-key custodial) deposits: receive both tokens using the
+ *     operator private key and send the combined value to the winner.
  */
 export async function processEscrowRelease(
   args: ReleaseArgs,
@@ -69,18 +82,8 @@ export async function processEscrowRelease(
     throw new ReleaseError('Invalid or unauthorized battle-finished event', 400);
   }
 
-  if (!deps.isTokenLockedToPubkey(args.hostDepositToken, deps.escrowPubkey)) {
-    throw new ReleaseError(
-      'Host deposit token is not locked to the escrow pubkey',
-      400,
-    );
-  }
-  if (!deps.isTokenLockedToPubkey(args.guestDepositToken, deps.escrowPubkey)) {
-    throw new ReleaseError(
-      'Guest deposit token is not locked to the escrow pubkey',
-      400,
-    );
-  }
+  const hostMultisig = deps.getMultisigDepositInfo(args.hostDepositToken);
+  const guestMultisig = deps.getMultisigDepositInfo(args.guestDepositToken);
 
   const hostEntries = deps.decodeToken(args.hostDepositToken);
   const guestEntries = deps.decodeToken(args.guestDepositToken);
@@ -100,6 +103,24 @@ export async function processEscrowRelease(
   }
 
   const mintUrl = hostEntries[0].mintUrl;
+
+  if (hostMultisig || guestMultisig) {
+    return processMultisigRelease(args, deps, hostMultisig, guestMultisig, hostEntries, guestEntries, mintUrl);
+  }
+
+  // ── Legacy custodial path (single-key P2PK locked to the operator) ──
+  if (!deps.isTokenLockedToPubkey(args.hostDepositToken, deps.escrowPubkey)) {
+    throw new ReleaseError(
+      'Host deposit token is not locked to the escrow pubkey',
+      400,
+    );
+  }
+  if (!deps.isTokenLockedToPubkey(args.guestDepositToken, deps.escrowPubkey)) {
+    throw new ReleaseError(
+      'Guest deposit token is not locked to the escrow pubkey',
+      400,
+    );
+  }
 
   const hostReceived = await deps.receive(
     mintUrl,
@@ -128,4 +149,89 @@ export async function processEscrowRelease(
 
   const token = encodeSingleMintToken(mintUrl, sendResult.send);
   return { token };
+}
+
+/**
+ * Non-custodial 2-of-3 release: the operator attests the outcome by co-signing
+ * every deposit proof and returning the combined witnessed token. The funds
+ * never move through the operator's wallet — the winner's own key provides
+ * the second required signature when they receive the token.
+ *
+ * Validation (both deposits, independently):
+ * - lock key set is exactly {host, guest, operator} (x-only)
+ * - exactly 2 required signatures
+ * - sole refund key is the DEPOSITOR's own key
+ * - locktime is beyond the sign margin (else refuse — refund path takes over)
+ */
+function processMultisigRelease(
+  args: ReleaseArgs,
+  deps: ReleaseDeps,
+  hostMultisig: ParsedP2PKLock | null,
+  guestMultisig: ParsedP2PKLock | null,
+  hostEntries: DecodedTokenEntry[],
+  guestEntries: DecodedTokenEntry[],
+  mintUrl: string,
+): ReleaseResult {
+  if (!hostMultisig || !guestMultisig) {
+    throw new ReleaseError(
+      'Deposit tokens use different escrow schemes — both must be 2-of-3 multisig deposits',
+      400,
+    );
+  }
+
+  const expectedKeys = [
+    toXOnlyPubkey(args.hostEscrowPubkey),
+    toXOnlyPubkey(args.guestEscrowPubkey),
+    toXOnlyPubkey(deps.escrowPubkey),
+  ];
+  if (expectedKeys.some((k) => k === null)) {
+    throw new ReleaseError('Battle escrow pubkeys are malformed', 400);
+  }
+  const expectedSet = JSON.stringify([...new Set(expectedKeys as string[])].sort());
+  const minLocktime = Math.floor(Date.now() / 1000) + OPERATOR_SIGN_MIN_LOCKTIME_MARGIN_SECONDS;
+
+  const validateDeposit = (
+    info: ParsedP2PKLock,
+    depositorPubkey: string,
+    label: string,
+  ): void => {
+    if (JSON.stringify(info.lockKeys) !== expectedSet) {
+      throw new ReleaseError(
+        `${label} deposit is not locked to the expected {host, guest, operator} key set`,
+        400,
+      );
+    }
+    if (info.requiredSignatures !== 2) {
+      throw new ReleaseError(
+        `${label} deposit does not require exactly 2 signatures`,
+        400,
+      );
+    }
+    const depositorKey = toXOnlyPubkey(depositorPubkey);
+    if (!depositorKey || JSON.stringify(info.refundKeys) !== JSON.stringify([depositorKey])) {
+      throw new ReleaseError(
+        `${label} deposit refund key is not the depositor's own key`,
+        400,
+      );
+    }
+    if (info.locktime === undefined || info.locktime <= minLocktime) {
+      throw new ReleaseError(
+        `${label} deposit is too close to its refund locktime — use the refund path instead`,
+        400,
+      );
+    }
+  };
+
+  validateDeposit(hostMultisig, args.hostEscrowPubkey, 'Host');
+  validateDeposit(guestMultisig, args.guestEscrowPubkey, 'Guest');
+
+  let signed: Proof[];
+  try {
+    signed = deps.cosignProofs([...hostEntries[0].proofs, ...guestEntries[0].proofs]);
+  } catch (err) {
+    console.error('[release] multisig co-sign failed:', err);
+    throw new ReleaseError('Escrow operator could not co-sign the deposits', 500);
+  }
+
+  return { token: encodeSingleMintToken(mintUrl, signed) };
 }

@@ -1,5 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- 2-of-3 multisig battle escrow — the non-custodial ₿AO escrow primitive, with real-sats pet battles as its first consumer. Stakes lock to THREE keys (both players + the escrow operator) and need ANY TWO signatures to move: the operator can never take the funds (it only co-signs the winner's claim), the opponent can't either, disputes resolve with the operator plus one honest player, and an abandoned battle self-heals — after the 24h locktime each player reclaims their exact stake with their own key, no operator needed (one-click "Reclaim my stake" once unlocked, plus an automatic stale-deposit refund sweep on the battle page). Battle setup shows a "How ₿AO escrow protects your sats" explainer with the honest trust limits, and the escrow operator service gains the matching co-sign `/release` path (legacy custodial release kept as a fallback).
+
+### Fixed
+- Cashu mint URLs with exactly four hostname labels (e.g. a mint on `pay.mint.example.com`) were misclassified as private IP addresses, so tokens from those mints were silently undecodable
+- Re-encoding a received Cashu token double-encoded P2PK witnesses — a latent bug that would have made escrow release tokens unreceivable
+
 ## [0.25.0] - 2026-07-08
 
 ### Added
