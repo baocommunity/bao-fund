@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   nsec: vi.fn(),
   extension: vi.fn(),
   bunker: vi.fn(),
-  nostrEvent: vi.fn(async () => ({})),
+  nostrEvent: vi.fn(async (_event: { kind: number; content: string }) => ({})),
   onHoldJoin: vi.fn(),
   onHumanPath: vi.fn(),
 }));
