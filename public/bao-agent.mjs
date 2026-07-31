@@ -10294,6 +10294,14 @@ async function publishAgentProfile(sk, name, relays) {
 *  BAO_CLAIM_TTL_MS overrides for live tests against a local relay. */
 const CLAIM_TTL_MS = Number(process.env.BAO_CLAIM_TTL_MS ?? 1800 * 1e3);
 /**
+* Wait this long before DECLARING a claim held, then re-resolve. A claim that
+* appears to win on a PARTIAL view — a rival's earlier-ms claim still in
+* flight — flips to held=false on this confirmation pass instead of letting
+* both racers believe they won (read-your-writes is not read-their-writes).
+* BAO_CLAIM_SETTLE_MS overrides for live tests.
+*/
+const CLAIM_SETTLE_MS = Number(process.env.BAO_CLAIM_SETTLE_MS ?? 1500);
+/**
 * Fail-closed (mosaico daemon-design: "an unavailable control channel fails
 * closed"). An empty claim history means one of two very different things —
 * "no claims yet" or "the relays are down and we can't see the claims". Only
@@ -10325,7 +10333,12 @@ async function orchVerbPost(state, verb, taskId, text, orchId) {
 			idemKey: key,
 			extraTags: [["t", ORCH_TASK_TAG], ["o", orchId]]
 		});
-		const now = (await orchStates(state, orchId)).get(taskId);
+		const holdsUs = (s) => !!s && s.claimant === myPubkey && s.epoch === epoch;
+		let now = (await orchStates(state, orchId)).get(taskId);
+		if (holdsUs(now) || !now) {
+			await new Promise((r) => setTimeout(r, CLAIM_SETTLE_MS));
+			now = (await orchStates(state, orchId)).get(taskId);
+		}
 		if (!now) return {
 			...sent,
 			held: null,
@@ -10333,7 +10346,7 @@ async function orchVerbPost(state, verb, taskId, text, orchId) {
 		};
 		return {
 			...sent,
-			held: now.claimant === myPubkey && now.epoch === epoch,
+			held: holdsUs(now),
 			epoch
 		};
 	}
