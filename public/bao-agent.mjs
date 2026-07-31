@@ -9930,7 +9930,7 @@ function resolveClaims(messages, opts) {
 		const cur = states.get(msg.taskId);
 		switch (msg.verb) {
 			case "CLAIM": {
-				if (cur && !cur.stale && !cur.done) break;
+				if (cur && !cur.stale && !cur.done && !cur.released) break;
 				const nextEpoch = (cur?.epoch ?? 0) + 1;
 				if (msg.epoch !== void 0 && msg.epoch !== nextEpoch) break;
 				states.set(msg.taskId, {
@@ -9942,6 +9942,7 @@ function resolveClaims(messages, opts) {
 					epoch: nextEpoch,
 					done: false,
 					blocked: false,
+					released: false,
 					stale: opts.nowMs - ms > opts.ttlMs
 				});
 				break;
@@ -9966,7 +9967,12 @@ function resolveClaims(messages, opts) {
 					cur.lastProgressMs = ms;
 				}
 				break;
-			case "HANDOFF": break;
+			case "HANDOFF":
+				if (cur && cur.claimant === author && !cur.done) {
+					cur.released = true;
+					cur.lastProgressMs = ms;
+				}
+				break;
 			case "ACK": break;
 		}
 	}
@@ -9983,10 +9989,11 @@ function resolveClaims(messages, opts) {
 *   AGENT it lost — otherwise it posts DONE and walks away believing it
 *   finished work it no longer owns. Own claim (even stale) may still be
 *   refreshed or marked: staleness is a lease lapse, not a loss.
-* - HANDOFF/ACK: no claim semantics, always allowed.
+* - HANDOFF while someone else holds the claim: refused (only the claimant
+*   can release). ACK carries no claim semantics, always allowed.
 */
 function mayPostVerb(cur, author, verb) {
-	if (verb === "PROGRESS" || verb === "DONE" || verb === "BLOCKED") {
+	if (verb === "PROGRESS" || verb === "DONE" || verb === "BLOCKED" || verb === "HANDOFF") {
 		if (cur && cur.claimant !== author) return false;
 	}
 	return true;
@@ -10304,7 +10311,7 @@ async function orchVerbPost(state, verb, taskId, text, orchId) {
 	if (verb === "CLAIM") {
 		const myPubkey = getPublicKey(hexToBytes$1(state.sk));
 		const cur = (await orchStates(state, orchId)).get(taskId);
-		if (cur && !cur.stale && !cur.done) return {
+		if (cur && !cur.stale && !cur.done && !cur.released) return {
 			rumorId: cur.claimant === myPubkey ? cur.claimId : "",
 			deduped: false,
 			held: cur.claimant === myPubkey,
@@ -10696,7 +10703,7 @@ async function orchShow(name, orchId, json) {
 	}
 	console.log(`\norch "${orchId}" — ${states.size} task(s):`);
 	for (const s of states.values()) {
-		const status = s.done ? "DONE" : s.blocked ? "BLOCKED" : s.stale ? "STALE (reclaimable)" : "claimed";
+		const status = s.done ? "DONE" : s.released ? "HANDED OFF (reclaimable)" : s.blocked ? "BLOCKED" : s.stale ? "STALE (reclaimable)" : "claimed";
 		console.log(`  ${s.taskId}: ${status} — ${npubEncode(s.claimant).slice(0, 16)}… (epoch ${s.epoch}, claim ${s.claimId.slice(0, 8)}…, last activity ${new Date(s.lastProgressMs).toISOString()})`);
 	}
 }
