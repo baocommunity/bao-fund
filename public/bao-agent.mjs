@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 //#region \0rolldown/runtime.js
@@ -10036,9 +10036,46 @@ function loadState(name) {
 	if ((state.protocol_version ?? 1) > 1) throw new Error(`Identity "${name}" was written by protocol v${state.protocol_version} but this binary speaks v1 — re-fetch bao-agent.mjs (never half-run a stale binary).`);
 	return state;
 }
+/**
+* Atomic write: crash mid-write must never leave a truncated state file —
+* it holds the hex private key, and losing it orphans the identity (mosaico
+* daemon-design, adopted as-is). tmp + rename is atomic on POSIX same-dir.
+*/
 function saveState(name, state) {
 	mkdirSync(STATE_DIR, { recursive: true });
-	writeFileSync(statePath(name), JSON.stringify(state, null, 2), { mode: 384 });
+	const path = statePath(name);
+	const tmp = `${path}.tmp`;
+	writeFileSync(tmp, JSON.stringify(state, null, 2), { mode: 384 });
+	renameSync(tmp, path);
+}
+/**
+* Advisory lockfile around state read-modify-write ops (invite, sweep):
+* two concurrent CLI processes would otherwise each read the old file and
+* lose the other's write — the mosaico multi-writer lesson at file level.
+* Locks whose holder died are reclaimed after 30s by mtime.
+*/
+async function withStateLock(name, fn) {
+	const lock = `${statePath(name)}.lock`;
+	const deadline = Date.now() + 1e4;
+	mkdirSync(STATE_DIR, { recursive: true });
+	for (;;) try {
+		closeSync(openSync(lock, "wx"));
+		break;
+	} catch (err) {
+		if (err.code !== "EEXIST") throw err;
+		try {
+			if (Date.now() - statSync(lock).mtimeMs > 3e4) unlinkSync(lock);
+		} catch {}
+		if (Date.now() > deadline) throw new Error(`State for "${name}" is locked by another process — retry shortly.`);
+		await new Promise((r) => setTimeout(r, 100));
+	}
+	try {
+		return await fn();
+	} finally {
+		try {
+			unlinkSync(lock);
+		} catch {}
+	}
 }
 function communityOf(c, privateChannels) {
 	const root = hexToBytes$1(c.community_root);
@@ -10470,45 +10507,47 @@ async function create(name, communityName, agentOnly) {
 	await invite(name);
 }
 async function invite(name, label, singleUse = false) {
-	const state = loadState(name);
-	if (state.role !== "owner") throw new Error("Only the owner identity can mint invites.");
-	const sk = hexToBytes$1(state.sk);
-	const pubkey = getPublicKey(sk);
-	const signer = signerOf(sk);
-	const community = communityOf(state.community, state.private_channels);
-	const token = mintToken();
-	const link = mintLinkSigner();
-	const bundleEvent = buildBundleEvent({
-		community_id: community.idHex,
-		owner: community.owner,
-		owner_salt: bytesToHex$1(community.ownerSalt),
-		community_root: bytesToHex$1(community.root),
-		root_epoch: Number(community.rootEpoch),
-		channels: [],
-		relays: community.relays,
-		name: community.name,
-		creator_npub: pubkey,
-		...label ? { label } : {},
-		...singleUse ? { max_uses: 1 } : {}
-	}, token, link.sk);
-	await publishAll(community.relays, bundleEvent, `invite bundle${singleUse ? " (single-use)" : ""}`);
-	state.registry_version += 1;
-	await publishAll(community.relays, await sealEdition(buildRegistryEdition(community.id, pubkey, state.invites.map((i) => i.link_pk).concat(link.pk), {
-		actorPubkey: pubkey,
-		version: BigInt(state.registry_version)
-	}), currentControlGroup(community), signer), "invite registry edition");
-	const urls = ORIGINS.map((origin) => buildInviteUrl(origin, link.pk, token, community.relays));
-	state.invites.push({
-		token: bytesToHex$1(token),
-		link_sk: bytesToHex$1(link.sk),
-		link_pk: link.pk,
-		url: urls[0],
-		created_at: Math.floor(Date.now() / 1e3),
-		...singleUse ? { max_uses: 1 } : {}
+	await withStateLock(name, async () => {
+		const state = loadState(name);
+		if (state.role !== "owner") throw new Error("Only the owner identity can mint invites.");
+		const sk = hexToBytes$1(state.sk);
+		const pubkey = getPublicKey(sk);
+		const signer = signerOf(sk);
+		const community = communityOf(state.community, state.private_channels);
+		const token = mintToken();
+		const link = mintLinkSigner();
+		const bundleEvent = buildBundleEvent({
+			community_id: community.idHex,
+			owner: community.owner,
+			owner_salt: bytesToHex$1(community.ownerSalt),
+			community_root: bytesToHex$1(community.root),
+			root_epoch: Number(community.rootEpoch),
+			channels: [],
+			relays: community.relays,
+			name: community.name,
+			creator_npub: pubkey,
+			...label ? { label } : {},
+			...singleUse ? { max_uses: 1 } : {}
+		}, token, link.sk);
+		await publishAll(community.relays, bundleEvent, `invite bundle${singleUse ? " (single-use)" : ""}`);
+		state.registry_version += 1;
+		await publishAll(community.relays, await sealEdition(buildRegistryEdition(community.id, pubkey, state.invites.map((i) => i.link_pk).concat(link.pk), {
+			actorPubkey: pubkey,
+			version: BigInt(state.registry_version)
+		}), currentControlGroup(community), signer), "invite registry edition");
+		const urls = ORIGINS.map((origin) => buildInviteUrl(origin, link.pk, token, community.relays));
+		state.invites.push({
+			token: bytesToHex$1(token),
+			link_sk: bytesToHex$1(link.sk),
+			link_pk: link.pk,
+			url: urls[0],
+			created_at: Math.floor(Date.now() / 1e3),
+			...singleUse ? { max_uses: 1 } : {}
+		});
+		saveState(name, state);
+		console.log(`\nInvite link minted${label ? ` ("${label}")` : ""}${singleUse ? " — SINGLE-USE, dies after the first join" : ""} — share EITHER origin (same secret):`);
+		for (const url of urls) console.log(`  ${url}`);
 	});
-	saveState(name, state);
-	console.log(`\nInvite link minted${label ? ` ("${label}")` : ""}${singleUse ? " — SINGLE-USE, dies after the first join" : ""} — share EITHER origin (same secret):`);
-	for (const url of urls) console.log(`  ${url}`);
 }
 async function joinBao(name, inviteUrl) {
 	if (existsSync(statePath(name))) throw new Error(`Identity "${name}" already exists — use say/read.`);
@@ -10626,33 +10665,26 @@ async function read(name, json) {
 	}
 	console.log(`\nMembers (${[...members.values()].filter((s) => s === "join").length}):`);
 	for (const [pk, status] of members) console.log(`  ${npubEncode(pk)} — ${status}`);
-	if (state.role === "owner") {
+	if (state.role === "owner") await withStateLock(name, async () => {
+		const fresh = loadState(name);
 		const opened = openGuestbookOpened(openGuestbookWraps(gbWraps, [gb]));
-		const remaining = [];
-		for (const inv of state.invites) {
-			if (inv.max_uses !== 1) {
-				remaining.push(inv);
-				continue;
-			}
-			if (!singleUseLinkUsed(opened, inviteCommitment(hexToBytes$1(inv.token)))) {
-				remaining.push(inv);
-				continue;
-			}
-			const sk = hexToBytes$1(state.sk);
-			const signer = signerOf(sk);
+		const spent = fresh.invites.filter((inv) => inv.max_uses === 1 && singleUseLinkUsed(opened, inviteCommitment(hexToBytes$1(inv.token))));
+		if (spent.length === 0) return;
+		const remaining = fresh.invites.filter((inv) => !spent.includes(inv));
+		const sk = hexToBytes$1(fresh.sk);
+		const signer = signerOf(sk);
+		for (const inv of spent) {
 			await publishAll(community.relays, buildRevocationEvent(hexToBytes$1(inv.link_sk)), `single-use tombstone (${inv.url.slice(0, 60)}…)`);
-			state.registry_version += 1;
-			await publishAll(community.relays, await sealEdition(buildRegistryEdition(community.id, getPublicKey(sk), remaining.map((i) => i.link_pk), {
-				actorPubkey: getPublicKey(sk),
-				version: BigInt(state.registry_version)
-			}), currentControlGroup(community), signer), "invite registry edition");
 			console.log(`  ⓘ single-use link spent${inv.label ? ` ("${inv.label}")` : ""} — auto-revoked`);
 		}
-		if (remaining.length !== state.invites.length) {
-			state.invites = remaining;
-			saveState(name, state);
-		}
-	}
+		fresh.registry_version += 1;
+		await publishAll(community.relays, await sealEdition(buildRegistryEdition(community.id, getPublicKey(sk), remaining.map((i) => i.link_pk), {
+			actorPubkey: getPublicKey(sk),
+			version: BigInt(fresh.registry_version)
+		}), currentControlGroup(community), signer), "invite registry edition");
+		fresh.invites = remaining;
+		saveState(name, fresh);
+	});
 }
 async function waitMode(name, opts) {
 	const hit = await waitForInterrupt(name, loadState(name), opts);
