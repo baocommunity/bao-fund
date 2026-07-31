@@ -3,6 +3,11 @@ main = "src/worker.ts"
 compatibility_date = "2026-07-31"
 compatibility_flags = ["nodejs_compat"]
 
+# Serve on our own domain, not <name>.<sub>.workers.dev. The bao.network zone
+# is on the same Cloudflare account, so deploy creates the DNS record + cert
+# automatically.
+routes = [{ pattern = "escrow.bao.network", custom_domain = true }]
+
 # The operator key is a Worker secret, NOT a var — set it once with:
 #   grep '^ESCROW_PRIVATE_KEY=' .env | cut -d= -f2 | npx wrangler secret put ESCROW_PRIVATE_KEY
 # (pipes it straight from the local .env without ever printing it)
