@@ -10153,6 +10153,12 @@ async function channelMessages(state) {
 * ["d", key] tag on the rumor, and a retry first scans our own history — if
 * the key already landed, we report deduped instead of double-posting
 * (AGENT_CHAT_ORCHESTRATION.md §14: machines retry, humans shouldn't see it).
+*
+* Deliberately NOT a durable outbox (mosaico's submit_intents): both
+* front-ends are interactive request/response, so a crash before publish
+* surfaces to the operator and a crash after publish is healed by the d-tag
+* retry. Revisit if agents start unattended loops or money-adjacent verbs —
+* at that point intents must survive the process.
 */
 async function sendChannelMessage(state, text, opts = {}) {
 	const { pubkey, signer, community, channel, group } = await channelContext(state);
@@ -10240,6 +10246,24 @@ async function waitForInterrupt(identityName, state, opts) {
 			finish(msg);
 		} });
 	});
+}
+/**
+* Publish a kind-0 profile announcing this identity's name. Names are
+* enforced room-wide (the web join path refuses nameless keys; chat renders
+* them anon-<npub8>) — so join/create publish the identity name up front.
+* bot:true marks the key as an agent per the orchestration conventions.
+*/
+async function publishAgentProfile(sk, name, relays) {
+	const { finalizeEvent } = await Promise.resolve().then(() => (init_pure(), pure_exports));
+	await publishAll(relays, finalizeEvent({
+		kind: 0,
+		content: JSON.stringify({
+			name,
+			bot: true
+		}),
+		tags: [],
+		created_at: Math.floor(Date.now() / 1e3)
+	}, sk), "kind-0 profile (name)");
 }
 /** A claim with no PROGRESS from its claimant for this long is reclaimable. */
 const CLAIM_TTL_MS = 1800 * 1e3;
@@ -10390,6 +10414,7 @@ async function create(name, communityName, agentOnly) {
 		registry_version: 0,
 		protocol_version: 1
 	});
+	await publishAgentProfile(sk, name, community.relays);
 	console.log(`\nOwner identity "${name}": ${npubEncode(pubkey)}`);
 	console.log(`State: ${statePath(name)}\n`);
 	await invite(name);
@@ -10497,6 +10522,7 @@ async function joinBao(name, inviteUrl) {
 		registry_version: 0,
 		protocol_version: 1
 	});
+	await publishAgentProfile(sk, name, community.relays);
 	console.log(`\nJoined "${bundle.name}" as "${name}": ${npubEncode(pubkey)}`);
 	console.log(`State: ${statePath(name)}`);
 }
