@@ -22,9 +22,10 @@ jobs:
           node-version: "22"
           
       - name: Clean install dependencies
-        run: |
-          rm -rf node_modules package-lock.json
-          npm install
+        # npm ci = reproducible install from the committed lockfile. Deleting
+        # the lockfile first made npm fail on the "$react" override references
+        # ("Unable to resolve reference $react") — red CI on every push.
+        run: npm ci
           
       - name: Run tests
         run: npm run test

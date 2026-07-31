@@ -42,6 +42,10 @@ jobs:
           # Pets battle escrow operator pubkey (public value — configure under
           # repo Settings → Secrets and variables → Actions → Variables).
           VITE_PETS_BATTLE_ESCROW_PUBKEY: ${{ vars.VITE_PETS_BATTLE_ESCROW_PUBKEY }}
+          # Where the app POSTs /release after a battle (the operator's public
+          # HTTPS URL — must be HTTPS: Pages serves the app over HTTPS and
+          # browsers block http:// API calls as mixed content).
+          VITE_PETS_BATTLE_ESCROW_URL: ${{ vars.VITE_PETS_BATTLE_ESCROW_URL }}
         run: |
           npm install
           npm run build
