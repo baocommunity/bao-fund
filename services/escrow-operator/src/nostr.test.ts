@@ -66,7 +66,7 @@ function makeAttestation(args: {
   const content = nip44.v2.encrypt(JSON.stringify(payload), conversationKey);
   return finalizeEvent(
     {
-      kind: args.kind ?? 21124,
+      kind: args.kind ?? 11124,
       created_at: Math.floor(Date.now() / 1000),
       tags: args.tags ?? [
         ['e', battleId],

@@ -12,7 +12,10 @@ export interface AttestationEvent {
   sig: string;
 }
 
-const BATTLE_SYNC_KIND = 21124;
+// Attestations ride a REGULAR (stored) kind, not the ephemeral battle-sync
+// kind 21124: relays must not store ephemerals, and the winner's hydration
+// retrieves the opponent's attestation after the fact.
+const BATTLE_ATTESTATION_KIND = 11124;
 const BATTLE_ATTESTATION_BINDING_KIND = 21125;
 const BATTLE_ATTESTATION_TAG = 'battle-attestation';
 
@@ -83,8 +86,8 @@ function decryptAttestation(
 
 /**
  * Verify one player's result attestation:
- * - outer event: kind 21124 battle-sync, references the battle, carries the
- *   attestation tag, valid Nostr signature
+ * - outer event: kind 11124 attestation (stored), references the battle,
+ *   carries the attestation tag, valid Nostr signature
  * - content decrypts to the operator and names this battle + a winner
  * - the embedded escrowBinding is signed by the attester's ESCROW key and
  *   names the outer event's Nostr pubkey + the same outcome — this binds the
@@ -101,7 +104,7 @@ function verifyOneAttestation(
   operatorPrivkey: string,
   label: string,
 ): { winner: 0 | 1 | null } | { reason: string } {
-  if (event.kind !== BATTLE_SYNC_KIND) return { reason: `${label} attestation has the wrong kind` };
+  if (event.kind !== BATTLE_ATTESTATION_KIND) return { reason: `${label} attestation has the wrong kind` };
   if (!hasTag(event, 'e', ctx.battleId) || !hasTag(event, 't', BATTLE_ATTESTATION_TAG)) {
     return { reason: `${label} attestation does not reference this battle` };
   }
