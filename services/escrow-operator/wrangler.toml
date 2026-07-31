@@ -1,0 +1,8 @@
+name = "bao-escrow-operator"
+main = "src/worker.ts"
+compatibility_date = "2026-07-31"
+compatibility_flags = ["nodejs_compat"]
+
+# The operator key is a Worker secret, NOT a var — set it once with:
+#   grep '^ESCROW_PRIVATE_KEY=' .env | cut -d= -f2 | npx wrangler secret put ESCROW_PRIVATE_KEY
+# (pipes it straight from the local .env without ever printing it)

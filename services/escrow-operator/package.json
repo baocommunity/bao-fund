@@ -8,7 +8,9 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "worker:dev": "wrangler dev",
+    "worker:deploy": "wrangler deploy"
   },
   "dependencies": {
     "@cashu/cashu-ts": "^2.9.0",
@@ -22,7 +24,8 @@
     "@types/node": "^22.5.5",
     "tsx": "^4.19.2",
     "typescript": "^5.5.3",
-    "vitest": "^4.1.8"
+    "vitest": "^4.1.8",
+    "wrangler": "^4.118.0"
   },
   "engines": {
     "node": ">=22"
