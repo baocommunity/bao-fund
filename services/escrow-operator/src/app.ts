@@ -10,6 +10,22 @@ export function buildApp(config: EscrowConfig): express.Express {
   const app = express();
   app.use(express.json());
 
+  // CORS: browsers call /release cross-origin (GitHub Pages apps, vite dev
+  // servers) with Content-Type: application/json, which triggers a preflight.
+  // The endpoint is permissionless — safety comes from attestation
+  // verification and the 2-of-3 deposit locks, not the Origin header — so
+  // any origin may call it.
+  app.use((req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    if (req.method === 'OPTIONS') {
+      res.sendStatus(204);
+      return;
+    }
+    next();
+  });
+
   app.get('/health', (_req, res) => {
     res.json({ status: 'ok', escrowPubkey: config.escrowPubkey });
   });
