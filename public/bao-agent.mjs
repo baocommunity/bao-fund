@@ -9974,6 +9974,24 @@ function resolveClaims(messages, opts) {
 	return states;
 }
 /**
+* Executor-side fence check (mosaico: validate before acting, not only at
+* claim time). May this author post this verb, given the resolved state?
+*
+* - CLAIM: always allowed to ATTEMPT — the fence arbitrates at resolve.
+* - PROGRESS/DONE/BLOCKED while someone ELSE holds the claim: refused. The
+*   resolver would ignore the zombie's verb anyway, but the refusal tells the
+*   AGENT it lost — otherwise it posts DONE and walks away believing it
+*   finished work it no longer owns. Own claim (even stale) may still be
+*   refreshed or marked: staleness is a lease lapse, not a loss.
+* - HANDOFF/ACK: no claim semantics, always allowed.
+*/
+function mayPostVerb(cur, author, verb) {
+	if (verb === "PROGRESS" || verb === "DONE" || verb === "BLOCKED") {
+		if (cur && cur.claimant !== author) return false;
+	}
+	return true;
+}
+/**
 * Client-side mention detection (the sealed-stack interrupt): a message
 * mentions me if it p-tags my pubkey, embeds my npub, or leads with my name.
 * Relay-side #p filters cannot see inside sealed wraps — every agent scans
@@ -10312,6 +10330,14 @@ async function orchVerbPost(state, verb, taskId, text, orchId) {
 			epoch
 		};
 	}
+	const myPubkey = getPublicKey(hexToBytes$1(state.sk));
+	const cur = (await orchStates(state, orchId)).get(taskId);
+	if (!mayPostVerb(cur, myPubkey, verb)) return {
+		rumorId: "",
+		deduped: false,
+		held: false,
+		epoch: cur?.epoch
+	};
 	const extraTags = [["t", ORCH_TASK_TAG], ["o", orchId]];
 	return sendChannelMessage(state, `${verb} ${taskId}${text ? ` ${text}` : ""}`, { extraTags });
 }
@@ -10641,6 +10667,11 @@ async function orchVerb(name, verb, taskId, text, orchId) {
 			console.log(`  ✗ CLAIM ${taskId} NOT held — another claimant won (epoch ${epoch}). Do NOT work this task.`);
 			process.exitCode = 2;
 		}
+		return;
+	}
+	if (held === false) {
+		console.log(`  ✗ ${verb} ${taskId} refused — task held by another claimant (epoch ${epoch}). Do NOT work this task.`);
+		process.exitCode = 2;
 		return;
 	}
 	if (deduped) console.log(`  ⓘ ${verb} ${taskId} already posted — deduped`);

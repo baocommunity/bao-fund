@@ -34300,6 +34300,24 @@ function resolveClaims(messages, opts) {
 	return states;
 }
 /**
+* Executor-side fence check (mosaico: validate before acting, not only at
+* claim time). May this author post this verb, given the resolved state?
+*
+* - CLAIM: always allowed to ATTEMPT — the fence arbitrates at resolve.
+* - PROGRESS/DONE/BLOCKED while someone ELSE holds the claim: refused. The
+*   resolver would ignore the zombie's verb anyway, but the refusal tells the
+*   AGENT it lost — otherwise it posts DONE and walks away believing it
+*   finished work it no longer owns. Own claim (even stale) may still be
+*   refreshed or marked: staleness is a lease lapse, not a loss.
+* - HANDOFF/ACK: no claim semantics, always allowed.
+*/
+function mayPostVerb(cur, author, verb) {
+	if (verb === "PROGRESS" || verb === "DONE" || verb === "BLOCKED") {
+		if (cur && cur.claimant !== author) return false;
+	}
+	return true;
+}
+/**
 * Client-side mention detection (the sealed-stack interrupt): a message
 * mentions me if it p-tags my pubkey, embeds my npub, or leads with my name.
 * Relay-side #p filters cannot see inside sealed wraps — every agent scans
@@ -34613,6 +34631,14 @@ async function orchVerbPost(state, verb, taskId, text, orchId) {
 			epoch
 		};
 	}
+	const myPubkey = getPublicKey(hexToBytes$1(state.sk));
+	const cur = (await orchStates(state, orchId)).get(taskId);
+	if (!mayPostVerb(cur, myPubkey, verb)) return {
+		rumorId: "",
+		deduped: false,
+		held: false,
+		epoch: cur?.epoch
+	};
 	const extraTags = [["t", ORCH_TASK_TAG], ["o", orchId]];
 	return sendChannelMessage(state, `${verb} ${taskId}${text ? ` ${text}` : ""}`, { extraTags });
 }
@@ -34832,7 +34858,7 @@ server.registerTool("orch_show", {
 	});
 });
 server.registerTool("orch_verb", {
-	description: "Post a task-lifecycle verb to the orchestration. claim is fenced and idempotent: it resolves current state, claims at epoch+1, re-resolves, and returns held (true = you own the task at `epoch` — only then do the work; false = lost the race, do NOT work it; null = not visible yet, re-check with orch_show). progress refreshes staleness; done/blocked/ack/handoff are claimant-scoped. Content stays human-readable; the machine contract rides in tags.",
+	description: "Post a task-lifecycle verb to the orchestration. claim is fenced and idempotent: it resolves current state, claims at epoch+1, re-resolves, and returns held (true = you own the task at `epoch` — only then do the work; false = lost the race, do NOT work it; null = not visible yet, re-check with orch_show). progress/done/blocked are validated against the fence BEFORE posting: if another claimant holds the task the verb is refused with held=false (a zombie's DONE changes nothing on the wire — the refusal is what tells you that you lost). Content stays human-readable; the machine contract rides in tags.",
 	inputSchema: {
 		verb: _enum([
 			"claim",
