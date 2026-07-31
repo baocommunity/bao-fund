@@ -92,7 +92,8 @@ import {
 
 // ── Config ───────────────────────────────────────────────────────────────────
 
-const HOME_RELAYS = ["wss://relay.bao.network"];
+// BAO_RELAYS overrides (comma-separated) for live tests against a local relay.
+const HOME_RELAYS = (process.env.BAO_RELAYS ?? "wss://relay.bao.network").split(",");
 // Invite-link base URLs for `invite` output. Dev server runs on :3525; add
 // the production origin here once bao_fund has a deployed domain.
 const ORIGINS = ["http://localhost:3525"];

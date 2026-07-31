@@ -10265,18 +10265,22 @@ async function publishAgentProfile(sk, name, relays) {
 		created_at: Math.floor(Date.now() / 1e3)
 	}, sk), "kind-0 profile (name)");
 }
-/** A claim with no PROGRESS from its claimant for this long is reclaimable. */
-const CLAIM_TTL_MS = 1800 * 1e3;
+/** A claim with no PROGRESS from its claimant for this long is reclaimable.
+*  BAO_CLAIM_TTL_MS overrides for live tests against a local relay. */
+const CLAIM_TTL_MS = Number(process.env.BAO_CLAIM_TTL_MS ?? 1800 * 1e3);
 /**
 * Fail-closed (mosaico daemon-design: "an unavailable control channel fails
 * closed"). An empty claim history means one of two very different things —
 * "no claims yet" or "the relays are down and we can't see the claims". Only
-* the first may resolve to an empty map; the second must throw, or an agent
-* would read silence as claimable and double-work a live claim.
+* the first may proceed; the second must throw, or an agent would read
+* silence as claimable and double-work a live claim.
+*
+* Probes ACTIVELY (ensureRelay), not via listConnectionStatus: the status map
+* is keyed by normalized URL and only reflects past connections, so a passive
+* read both misses keys and can't run before the first query.
 */
-function assertRelayReachable(relays) {
-	const status = getPool().listConnectionStatus();
-	if (relays.filter((r) => status.get(r) === true).length === 0) throw new Error(`cannot resolve claims: 0/${relays.length} relays reachable — refusing to treat silence as claimable (fail-closed). Retry when a relay answers.`);
+async function assertRelayReachable(relays) {
+	if ((await Promise.allSettled(relays.map((r) => getPool().ensureRelay(r, { connectionTimeout: 2500 })))).filter((p) => p.status === "fulfilled").length === 0) throw new Error(`cannot resolve claims: 0/${relays.length} relays reachable — refusing to treat silence as claimable (fail-closed). Retry when a relay answers.`);
 }
 async function orchVerbPost(state, verb, taskId, text, orchId) {
 	if (verb === "CLAIM") {
@@ -10312,6 +10316,7 @@ async function orchVerbPost(state, verb, taskId, text, orchId) {
 	return sendChannelMessage(state, `${verb} ${taskId}${text ? ` ${text}` : ""}`, { extraTags });
 }
 async function orchStates(state, orchId) {
+	await assertRelayReachable(state.community.relays);
 	const inputs = [];
 	const messages = await channelMessages(state);
 	for (const m of messages) {
@@ -10326,7 +10331,6 @@ async function orchStates(state, orchId) {
 			msg
 		});
 	}
-	if (messages.length === 0) assertRelayReachable(state.community.relays);
 	return resolveClaims(inputs, {
 		ttlMs: CLAIM_TTL_MS,
 		nowMs: Date.now()
@@ -10368,7 +10372,7 @@ async function orchStates(state, orchId) {
 * Exit codes: 0 ok · 1 error · 2 timeout/no-result (Buzz-style discipline).
 */
 init_pure();
-const HOME_RELAYS = ["wss://relay.bao.network"];
+const HOME_RELAYS = (process.env.BAO_RELAYS ?? "wss://relay.bao.network").split(",");
 const ORIGINS = ["http://localhost:3525"];
 async function create(name, communityName, agentOnly) {
 	if (existsSync(statePath(name))) throw new Error(`Identity "${name}" already exists — use invite/say/read.`);

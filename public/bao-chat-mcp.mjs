@@ -34472,6 +34472,12 @@ async function channelMessages(state) {
 * ["d", key] tag on the rumor, and a retry first scans our own history — if
 * the key already landed, we report deduped instead of double-posting
 * (AGENT_CHAT_ORCHESTRATION.md §14: machines retry, humans shouldn't see it).
+*
+* Deliberately NOT a durable outbox (mosaico's submit_intents): both
+* front-ends are interactive request/response, so a crash before publish
+* surfaces to the operator and a crash after publish is healed by the d-tag
+* retry. Revisit if agents start unattended loops or money-adjacent verbs —
+* at that point intents must survive the process.
 */
 async function sendChannelMessage(state, text, opts = {}) {
 	const { pubkey, signer, community, channel, group } = await channelContext(state);
@@ -34560,18 +34566,22 @@ async function waitForInterrupt(identityName, state, opts) {
 		} });
 	});
 }
-/** A claim with no PROGRESS from its claimant for this long is reclaimable. */
-const CLAIM_TTL_MS = 1800 * 1e3;
+/** A claim with no PROGRESS from its claimant for this long is reclaimable.
+*  BAO_CLAIM_TTL_MS overrides for live tests against a local relay. */
+const CLAIM_TTL_MS = Number(process.env.BAO_CLAIM_TTL_MS ?? 1800 * 1e3);
 /**
 * Fail-closed (mosaico daemon-design: "an unavailable control channel fails
 * closed"). An empty claim history means one of two very different things —
 * "no claims yet" or "the relays are down and we can't see the claims". Only
-* the first may resolve to an empty map; the second must throw, or an agent
-* would read silence as claimable and double-work a live claim.
+* the first may proceed; the second must throw, or an agent would read
+* silence as claimable and double-work a live claim.
+*
+* Probes ACTIVELY (ensureRelay), not via listConnectionStatus: the status map
+* is keyed by normalized URL and only reflects past connections, so a passive
+* read both misses keys and can't run before the first query.
 */
-function assertRelayReachable(relays) {
-	const status = getPool().listConnectionStatus();
-	if (relays.filter((r) => status.get(r) === true).length === 0) throw new Error(`cannot resolve claims: 0/${relays.length} relays reachable — refusing to treat silence as claimable (fail-closed). Retry when a relay answers.`);
+async function assertRelayReachable(relays) {
+	if ((await Promise.allSettled(relays.map((r) => getPool().ensureRelay(r, { connectionTimeout: 2500 })))).filter((p) => p.status === "fulfilled").length === 0) throw new Error(`cannot resolve claims: 0/${relays.length} relays reachable — refusing to treat silence as claimable (fail-closed). Retry when a relay answers.`);
 }
 async function orchVerbPost(state, verb, taskId, text, orchId) {
 	if (verb === "CLAIM") {
@@ -34607,6 +34617,7 @@ async function orchVerbPost(state, verb, taskId, text, orchId) {
 	return sendChannelMessage(state, `${verb} ${taskId}${text ? ` ${text}` : ""}`, { extraTags });
 }
 async function orchStates(state, orchId) {
+	await assertRelayReachable(state.community.relays);
 	const inputs = [];
 	const messages = await channelMessages(state);
 	for (const m of messages) {
@@ -34621,7 +34632,6 @@ async function orchStates(state, orchId) {
 			msg
 		});
 	}
-	if (messages.length === 0) assertRelayReachable(state.community.relays);
 	return resolveClaims(inputs, {
 		ttlMs: CLAIM_TTL_MS,
 		nowMs: Date.now()
