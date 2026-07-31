@@ -34174,13 +34174,26 @@ function foldOnce(editions, communityId, ownerHex, priorHeads, snapshotIds) {
 *   manifest is coordination metadata, not community content).
 * - Task lifecycle: chat messages (sealed rumors inside a ₿AO — inner kind 9)
 *   tagged `["t", "orch-task"]` whose content starts with a verb:
-*     CLAIM <taskId> key=<idempotencyKey>
+*     CLAIM <taskId> key=<idempotencyKey> epoch=<fencingEpoch>
 *     PROGRESS <taskId> <one line>
 *     HANDOFF <taskId> @<agent> <state summary>   (receiver must ACK)
 *     ACK <taskId>
 *     DONE <taskId> <artifact refs>
 *     BLOCKED <taskId> <reason> <need>
 *   Machines parse the tags + first word; the rest stays human-readable.
+*
+* Fencing (mosaico daemon-design, adapted): every CLAIM carries a fencing
+* epoch — the claimant's view of how many times the task has changed hands,
+* plus one. A CLAIM whose epoch doesn't match current-epoch + 1 is a
+* stale-view claim and is IGNORED (never half-succeed on a stale read): the
+* loser re-resolves and retries at the right epoch. Two agents reclaiming the
+* same stale claim publish the same epoch; the tie-break picks one, and the
+* other detects the loss by re-resolving (`held` in chat-core) instead of
+* double-working. Legacy CLAIMs without `epoch=` still claim (mixed fleet),
+* and also bump the epoch. PROGRESS/DONE/BLOCKED stay claimant-scoped WITHOUT
+* an epoch: resolution folds in ms order, so a zombie's late verb lands while
+* someone else holds the claim and is ignored — same-author cross-epoch
+* confusion can't survive the fold.
 */
 const ORCH_TASK_TAG = "orch-task";
 const VERBS = [
@@ -34204,19 +34217,23 @@ function parseTaskMessage(content, tags) {
 	if (!VERBS.includes(verb)) return null;
 	const rest = (m[3] ?? "").trim();
 	const keyMatch = rest.match(/(?:^|\s)key=(\S+)/);
+	const epochMatch = rest.match(/(?:^|\s)epoch=(\d+)(?:\s|$)/);
 	return {
 		verb,
 		taskId: m[2],
 		rest,
-		...verb === "CLAIM" && keyMatch ? { idemKey: keyMatch[1] } : {}
+		...verb === "CLAIM" && keyMatch ? { idemKey: keyMatch[1] } : {},
+		...verb === "CLAIM" && epochMatch ? { epoch: Number(epochMatch[1]) } : {}
 	};
 }
 /**
 * Deterministic idempotency key for a claim: a retrying agent re-publishes
-* the SAME claim event instead of racing itself (§14).
+* the SAME claim event instead of racing itself (§14). The epoch salts the
+* key, so a re-claim after a stale takeover is a NEW key (not deduped against
+* the earlier claim) while a retry of the same epoch's claim stays idempotent.
 */
-function deriveClaimKey(orchId, taskId) {
-	return bytesToHex$1(sha256(new TextEncoder().encode(`bao-orch:claim:${orchId}:${taskId}`))).slice(0, 32);
+function deriveClaimKey(orchId, taskId, epoch = 1) {
+	return bytesToHex$1(sha256(new TextEncoder().encode(`bao-orch:claim:${orchId}:${taskId}:${epoch}`))).slice(0, 32);
 }
 /**
 * Resolve who owns each task right now. THE shared tie-break (§14):
@@ -34225,6 +34242,12 @@ function deriveClaimKey(orchId, taskId) {
 * but the next valid CLAIM takes the task (stale claims never win over a
 * fresh one). DONE/BLOCKED are terminal-state markers from the claimant only
 * (nobody can mark someone else's task done).
+*
+* Fencing: an epoch-bearing CLAIM is valid ONLY if its epoch is exactly
+* current-epoch + 1 (or 1 for a never-claimed task) — a mismatched CLAIM was
+* issued from a stale view and is ignored outright, so two concurrent
+* reclaimers can never both believe they won. Epoch-less legacy CLAIMs skip
+* the check but still bump the epoch.
 */
 function resolveClaims(messages, opts) {
 	const sorted = [...messages].sort((a, b) => a.ms - b.ms || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -34232,19 +34255,23 @@ function resolveClaims(messages, opts) {
 	for (const { id, author, ms, msg } of sorted) {
 		const cur = states.get(msg.taskId);
 		switch (msg.verb) {
-			case "CLAIM":
+			case "CLAIM": {
 				if (cur && !cur.stale && !cur.done) break;
+				const nextEpoch = (cur?.epoch ?? 0) + 1;
+				if (msg.epoch !== void 0 && msg.epoch !== nextEpoch) break;
 				states.set(msg.taskId, {
 					taskId: msg.taskId,
 					claimant: author,
 					claimId: id,
 					claimMs: ms,
 					lastProgressMs: ms,
+					epoch: nextEpoch,
 					done: false,
 					blocked: false,
 					stale: opts.nowMs - ms > opts.ttlMs
 				});
 				break;
+			}
 			case "PROGRESS":
 				if (cur && cur.claimant === author && !cur.done) {
 					cur.lastProgressMs = ms;
@@ -34306,7 +34333,9 @@ function statePath(name) {
 function loadState(name) {
 	const path = statePath(name);
 	if (!existsSync(path)) throw new Error(`No identity "${name}" — expected ${path}`);
-	return JSON.parse(readFileSync(path, "utf8"));
+	const state = JSON.parse(readFileSync(path, "utf8"));
+	if ((state.protocol_version ?? 1) > 1) throw new Error(`Identity "${name}" was written by protocol v${state.protocol_version} but this binary speaks v1 — re-fetch bao-agent.mjs (never half-run a stale binary).`);
+	return state;
 }
 function communityOf(c, privateChannels) {
 	const root = hexToBytes$1(c.community_root);
@@ -34533,24 +34562,54 @@ async function waitForInterrupt(identityName, state, opts) {
 }
 /** A claim with no PROGRESS from its claimant for this long is reclaimable. */
 const CLAIM_TTL_MS = 1800 * 1e3;
+/**
+* Fail-closed (mosaico daemon-design: "an unavailable control channel fails
+* closed"). An empty claim history means one of two very different things —
+* "no claims yet" or "the relays are down and we can't see the claims". Only
+* the first may resolve to an empty map; the second must throw, or an agent
+* would read silence as claimable and double-work a live claim.
+*/
+function assertRelayReachable(relays) {
+	const status = getPool().listConnectionStatus();
+	if (relays.filter((r) => status.get(r) === true).length === 0) throw new Error(`cannot resolve claims: 0/${relays.length} relays reachable — refusing to treat silence as claimable (fail-closed). Retry when a relay answers.`);
+}
 async function orchVerbPost(state, verb, taskId, text, orchId) {
-	const extraTags = [["t", ORCH_TASK_TAG], ["o", orchId]];
-	let content = `${verb} ${taskId}`;
-	let idemKey;
 	if (verb === "CLAIM") {
-		const key = deriveClaimKey(orchId, taskId);
-		content += ` key=${key}`;
-		idemKey = key;
+		const myPubkey = getPublicKey(hexToBytes$1(state.sk));
+		const cur = (await orchStates(state, orchId)).get(taskId);
+		if (cur && !cur.stale && !cur.done) return {
+			rumorId: cur.claimant === myPubkey ? cur.claimId : "",
+			deduped: false,
+			held: cur.claimant === myPubkey,
+			epoch: cur.epoch
+		};
+		const epoch = (cur?.epoch ?? 0) + 1;
+		const key = deriveClaimKey(orchId, taskId, epoch);
+		let content = `CLAIM ${taskId} key=${key} epoch=${epoch}`;
+		if (text) content += ` ${text}`;
+		const sent = await sendChannelMessage(state, content, {
+			idemKey: key,
+			extraTags: [["t", ORCH_TASK_TAG], ["o", orchId]]
+		});
+		const now = (await orchStates(state, orchId)).get(taskId);
+		if (!now) return {
+			...sent,
+			held: null,
+			epoch
+		};
+		return {
+			...sent,
+			held: now.claimant === myPubkey && now.epoch === epoch,
+			epoch
+		};
 	}
-	if (text) content += ` ${text}`;
-	return sendChannelMessage(state, content, {
-		idemKey,
-		extraTags
-	});
+	const extraTags = [["t", ORCH_TASK_TAG], ["o", orchId]];
+	return sendChannelMessage(state, `${verb} ${taskId}${text ? ` ${text}` : ""}`, { extraTags });
 }
 async function orchStates(state, orchId) {
 	const inputs = [];
-	for (const m of await channelMessages(state)) {
+	const messages = await channelMessages(state);
+	for (const m of messages) {
 		const msg = parseTaskMessage(m.content, m.tags);
 		if (!msg) continue;
 		const oTags = m.tags.filter((t) => t[0] === "o").map((t) => t[1]);
@@ -34562,6 +34621,7 @@ async function orchStates(state, orchId) {
 			msg
 		});
 	}
+	if (messages.length === 0) assertRelayReachable(state.community.relays);
 	return resolveClaims(inputs, {
 		ttlMs: CLAIM_TTL_MS,
 		nowMs: Date.now()
@@ -34747,7 +34807,7 @@ server.registerTool("set_profile", {
 	});
 });
 server.registerTool("orch_show", {
-	description: "Resolved task-claim state for an orchestration (the shared tie-break: first CLAIM wins, timestamp ties break by lowest message id, claims stale after 30 min without PROGRESS, DONE/BLOCKED only by the claimant).",
+	description: "Resolved task-claim state for an orchestration (the shared tie-break: first CLAIM wins, timestamp ties break by lowest message id, claims stale after 30 min without PROGRESS, DONE/BLOCKED only by the claimant). Each task carries a fencing epoch that increments on every change of hands — only act on a task while you are the claimant at the current epoch. Fails CLOSED when no relay is reachable (silence is never read as claimable).",
 	inputSchema: { orch: string().max(64).default("cards").describe("Orchestration id (the room's coordination scope)") }
 }, async ({ orch }) => {
 	const states = await orchStates(identityState(), orch);
@@ -34762,7 +34822,7 @@ server.registerTool("orch_show", {
 	});
 });
 server.registerTool("orch_verb", {
-	description: "Post a task-lifecycle verb to the orchestration: claim a task (idempotent — a retry re-publishes the same claim), report progress (refreshes staleness), or mark done/blocked/ack/handoff. Content stays human-readable; the machine contract rides in tags.",
+	description: "Post a task-lifecycle verb to the orchestration. claim is fenced and idempotent: it resolves current state, claims at epoch+1, re-resolves, and returns held (true = you own the task at `epoch` — only then do the work; false = lost the race, do NOT work it; null = not visible yet, re-check with orch_show). progress refreshes staleness; done/blocked/ack/handoff are claimant-scoped. Content stays human-readable; the machine contract rides in tags.",
 	inputSchema: {
 		verb: _enum([
 			"claim",
@@ -34777,15 +34837,19 @@ server.registerTool("orch_verb", {
 		orch: string().max(64).default("cards")
 	}
 }, async ({ verb, task_id, text, orch }) => {
-	const { rumorId, deduped } = await orchVerbPost(identityState(), verb.toUpperCase(), task_id, text, orch);
+	const result = await orchVerbPost(identityState(), verb.toUpperCase(), task_id, text, orch);
 	audit("orch_verb", {
 		verb,
 		task_id,
 		orch
-	}, deduped ? "deduped" : `sent ${rumorId.slice(0, 12)}`);
+	}, result.deduped ? "deduped" : `sent ${result.rumorId.slice(0, 12)}`);
 	return jsonResult({
-		rumor_id: rumorId,
-		deduped
+		rumor_id: result.rumorId,
+		deduped: result.deduped,
+		...result.held !== void 0 ? {
+			held: result.held,
+			epoch: result.epoch
+		} : {}
 	});
 });
 async function main() {
