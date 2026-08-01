@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `scripts/escrow-release-probe.mjs` — repeatable end-to-end smoke test of the LIVE escrow operator (https://escrow.bao.network): health/pubkey check, a negative probe (disagreeing attestations must be refused with 400), then the full happy path against the ₿AO signet mint — faucet claims, two real 2-of-3 multisig deposits (fresh throwaway keys, nostr key ≠ escrow key like the real clients), mutual kind-11124 attestations, POST /release, and the winner sweeping the pot with its own escrow key as the second signature. Run `node scripts/escrow-release-probe.mjs` any time to verify mainnet-readiness of the release path; exit code 0 = contract verified
+
 ### Fixed
 - Escrow operator now ships as a Cloudflare Worker (`services/escrow-operator/src/worker.ts` + `wrangler.toml`) — the production home for /release. GitHub Pages can only serve static files and the operator must not live on a personal machine; a Worker is always-on, free-tier, and keeps the key in Cloudflare's encrypted secrets (set via `wrangler secret put`, never in the repo). Same contract as the Express app (GET /health, POST /release, permissive CORS — the endpoint is permissionless by design: safety comes from attestation verification and the 2-of-3 deposit locks). The Express app stays for local dev; the release logic (processEscrowRelease) is shared verbatim between both. Handler contract covered by worker.test.ts; bundle verified deployable via `wrangler deploy --dry-run`
 - CI: Test workflow red on every push — its "clean install" step deleted `package-lock.json` before `npm install`, which makes npm fail on the `"react": "$react"` overrides ("Unable to resolve reference $react"); switched to `npm ci` (reproducible install from the committed lockfile). Deploy workflow now also passes `VITE_PETS_BATTLE_ESCROW_URL` into the build env (previously only the pubkey was wired, so the built app never learned where to POST /release)
