@@ -10280,6 +10280,8 @@ async function sendChannelMessage(state, text, opts = {}) {
 	}
 }
 async function sendChannelMessageInner(state, text, opts = {}) {
+	const textBytes = new TextEncoder().encode(text).length;
+	if (textBytes > 4e4) throw new Error(`Message too large: ${textBytes} bytes (max 40,000 — the sealed wrap must fit NIP-44's 65,535-byte plaintext cap)`);
 	const { pubkey, signer, community, channel, group } = await channelContext(state);
 	if (opts.idemKey) {
 		const dupe = (await channelMessages(state)).find((m) => m.author === pubkey && m.tags.some((t) => t[0] === "d" && t[1] === opts.idemKey));
@@ -10410,6 +10412,7 @@ async function assertRelayReachable(relays) {
 	if ((await Promise.allSettled(relays.map((r) => getPool().ensureRelay(r, { connectionTimeout: 2500 })))).filter((p) => p.status === "fulfilled").length === 0) throw new Error(`cannot resolve claims: 0/${relays.length} relays reachable — refusing to treat silence as claimable (fail-closed). Retry when a relay answers.`);
 }
 async function orchVerbPost(state, verb, taskId, text, orchId) {
+	if (/\s/.test(taskId)) throw new Error(`Task id must not contain whitespace: ${JSON.stringify(taskId)}`);
 	if (verb === "CLAIM") {
 		const myPubkey = getPublicKey(hexToBytes$1(state.sk));
 		const cur = (await orchStates(state, orchId)).get(taskId);

@@ -34591,6 +34591,8 @@ async function sendChannelMessage(state, text, opts = {}) {
 	}
 }
 async function sendChannelMessageInner(state, text, opts = {}) {
+	const textBytes = new TextEncoder().encode(text).length;
+	if (textBytes > 4e4) throw new Error(`Message too large: ${textBytes} bytes (max 40,000 — the sealed wrap must fit NIP-44's 65,535-byte plaintext cap)`);
 	const { pubkey, signer, community, channel, group } = await channelContext(state);
 	if (opts.idemKey) {
 		const dupe = (await channelMessages(state)).find((m) => m.author === pubkey && m.tags.some((t) => t[0] === "d" && t[1] === opts.idemKey));
@@ -34703,6 +34705,7 @@ async function assertRelayReachable(relays) {
 	if ((await Promise.allSettled(relays.map((r) => getPool().ensureRelay(r, { connectionTimeout: 2500 })))).filter((p) => p.status === "fulfilled").length === 0) throw new Error(`cannot resolve claims: 0/${relays.length} relays reachable — refusing to treat silence as claimable (fail-closed). Retry when a relay answers.`);
 }
 async function orchVerbPost(state, verb, taskId, text, orchId) {
+	if (/\s/.test(taskId)) throw new Error(`Task id must not contain whitespace: ${JSON.stringify(taskId)}`);
 	if (verb === "CLAIM") {
 		const myPubkey = getPublicKey(hexToBytes$1(state.sk));
 		const cur = (await orchStates(state, orchId)).get(taskId);
@@ -34950,7 +34953,7 @@ server.registerTool("set_profile", {
 });
 server.registerTool("orch_show", {
 	description: "Resolved task-claim state for an orchestration (the shared tie-break: first CLAIM wins, timestamp ties break by lowest message id, claims stale after 30 min without PROGRESS, DONE/BLOCKED only by the claimant). Each task carries a fencing epoch that increments on every change of hands — only act on a task while you are the claimant at the current epoch. Fails CLOSED when no relay is reachable (silence is never read as claimable).",
-	inputSchema: { orch: string().max(64).default("cards").describe("Orchestration id (the room's coordination scope)") }
+	inputSchema: { orch: string().max(64).regex(/^\S*$/, "orch must not contain whitespace").default("cards").describe("Orchestration id (the room's coordination scope)") }
 }, async ({ orch }) => {
 	const states = await orchStates(identityState(), orch);
 	audit("orch_show", { orch }, `${states.size} task(s)`);
@@ -34974,9 +34977,9 @@ server.registerTool("orch_verb", {
 			"ack",
 			"handoff"
 		]),
-		task_id: string().min(1).max(128),
+		task_id: string().min(1).max(128).regex(/^\S+$/, "task_id must not contain whitespace"),
 		text: string().max(2e3).default("").describe("Extra human-readable payload after the task id"),
-		orch: string().max(64).default("cards")
+		orch: string().max(64).regex(/^\S*$/, "orch must not contain whitespace").default("cards")
 	}
 }, async ({ verb, task_id, text, orch }) => {
 	const result = await orchVerbPost(identityState(), verb.toUpperCase(), task_id, text, orch);
