@@ -34248,11 +34248,20 @@ function deriveClaimKey(orchId, taskId, epoch = 1) {
 * issued from a stale view and is ignored outright, so two concurrent
 * reclaimers can never both believe they won. Epoch-less legacy CLAIMs skip
 * the check but still bump the epoch.
+*
+* Delivery is at-least-once (a relay can resend a stored event on a new
+* subscription), so the SAME rumor id is processed once: a replayed legacy
+* CLAIM on an already-stale claim would otherwise re-take the task and bump
+* the epoch a second time, silently un-fencing every later CLAIM (found by
+* the seed-101 fuzz property: duplication must be a no-op).
 */
 function resolveClaims(messages, opts) {
 	const sorted = [...messages].sort((a, b) => a.ms - b.ms || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 	const states = /* @__PURE__ */ new Map();
+	const delivered = /* @__PURE__ */ new Set();
 	for (const { id, author, ms, msg } of sorted) {
+		if (delivered.has(id)) continue;
+		delivered.add(id);
 		const cur = states.get(msg.taskId);
 		switch (msg.verb) {
 			case "CLAIM": {
@@ -34490,7 +34499,15 @@ async function channelMessages(state) {
 		});
 	} catch {}
 	messages.sort((a, b) => a.ms - b.ms || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-	return messages;
+	const seenKeys = /* @__PURE__ */ new Set();
+	return messages.filter((m) => {
+		const d = m.tags.find((t) => t[0] === "d")?.[1];
+		if (d === void 0) return true;
+		const k = `${m.author}:${d}`;
+		if (seenKeys.has(k)) return false;
+		seenKeys.add(k);
+		return true;
+	});
 }
 /**
 * Post to #general. Idempotent when `idemKey` is given: the key rides as a
@@ -34504,7 +34521,29 @@ async function channelMessages(state) {
 * retry. Revisit if agents start unattended loops or money-adjacent verbs —
 * at that point intents must survive the process.
 */
+/**
+* In-flight keyed sends serialize PER PROCESS: the idempotency scan below is
+* check-then-publish and not atomic, and concurrent callers in one process
+* (parallel MCP tool calls) would otherwise both scan before either lands and
+* double-post (found live in the round-7 MCP stress). The waiter re-scans
+* after the first send resolves and dedupes against it.
+*/
+const inflightKeyedSends = /* @__PURE__ */ new Map();
 async function sendChannelMessage(state, text, opts = {}) {
+	if (opts.idemKey) {
+		const prior = inflightKeyedSends.get(opts.idemKey);
+		if (prior) await prior.catch(() => {});
+	}
+	const run = sendChannelMessageInner(state, text, opts);
+	if (!opts.idemKey) return run;
+	inflightKeyedSends.set(opts.idemKey, run);
+	try {
+		return await run;
+	} finally {
+		if (inflightKeyedSends.get(opts.idemKey) === run) inflightKeyedSends.delete(opts.idemKey);
+	}
+}
+async function sendChannelMessageInner(state, text, opts = {}) {
 	const { pubkey, signer, community, channel, group } = await channelContext(state);
 	if (opts.idemKey) {
 		const dupe = (await channelMessages(state)).find((m) => m.author === pubkey && m.tags.some((t) => t[0] === "d" && t[1] === opts.idemKey));

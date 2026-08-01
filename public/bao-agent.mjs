@@ -10217,7 +10217,15 @@ async function channelMessages(state) {
 		});
 	} catch {}
 	messages.sort((a, b) => a.ms - b.ms || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-	return messages;
+	const seenKeys = /* @__PURE__ */ new Set();
+	return messages.filter((m) => {
+		const d = m.tags.find((t) => t[0] === "d")?.[1];
+		if (d === void 0) return true;
+		const k = `${m.author}:${d}`;
+		if (seenKeys.has(k)) return false;
+		seenKeys.add(k);
+		return true;
+	});
 }
 /**
 * Post to #general. Idempotent when `idemKey` is given: the key rides as a
@@ -10231,7 +10239,29 @@ async function channelMessages(state) {
 * retry. Revisit if agents start unattended loops or money-adjacent verbs —
 * at that point intents must survive the process.
 */
+/**
+* In-flight keyed sends serialize PER PROCESS: the idempotency scan below is
+* check-then-publish and not atomic, and concurrent callers in one process
+* (parallel MCP tool calls) would otherwise both scan before either lands and
+* double-post (found live in the round-7 MCP stress). The waiter re-scans
+* after the first send resolves and dedupes against it.
+*/
+const inflightKeyedSends = /* @__PURE__ */ new Map();
 async function sendChannelMessage(state, text, opts = {}) {
+	if (opts.idemKey) {
+		const prior = inflightKeyedSends.get(opts.idemKey);
+		if (prior) await prior.catch(() => {});
+	}
+	const run = sendChannelMessageInner(state, text, opts);
+	if (!opts.idemKey) return run;
+	inflightKeyedSends.set(opts.idemKey, run);
+	try {
+		return await run;
+	} finally {
+		if (inflightKeyedSends.get(opts.idemKey) === run) inflightKeyedSends.delete(opts.idemKey);
+	}
+}
+async function sendChannelMessageInner(state, text, opts = {}) {
 	const { pubkey, signer, community, channel, group } = await channelContext(state);
 	if (opts.idemKey) {
 		const dupe = (await channelMessages(state)).find((m) => m.author === pubkey && m.tags.some((t) => t[0] === "d" && t[1] === opts.idemKey));
