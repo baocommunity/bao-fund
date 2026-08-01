@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- ₿AO campaign runner-fee tiers updated to the current spec: 2.14% (min) / 4.21% / 10% — the 1.0% tier is gone and 10% added (default selection was already 2.14%, unaffected). Synced with 2140wtf so both apps offer identical fee options
+
 ### Added
 - `scripts/escrow-release-probe.mjs` — repeatable end-to-end smoke test of the LIVE escrow operator (https://escrow.bao.network): health/pubkey check, a negative probe (disagreeing attestations must be refused with 400), then the full happy path against the ₿AO signet mint — faucet claims, two real 2-of-3 multisig deposits (fresh throwaway keys, nostr key ≠ escrow key like the real clients), mutual kind-11124 attestations, POST /release, and the winner sweeping the pot with its own escrow key as the second signature. Run `node scripts/escrow-release-probe.mjs` any time to verify mainnet-readiness of the release path; exit code 0 = contract verified
 
