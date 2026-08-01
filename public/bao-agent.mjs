@@ -8887,6 +8887,17 @@ function meetsJoinPow(rumorIdHex, difficulty) {
 	return countLeadingZeroBits(rumorIdHex) >= difficulty;
 }
 /**
+* Attempt budget for a grind: 2^(d+4) = 16× the expected work, so a VALID
+* gate fails only with probability e^-16 (~1e-7). A flat cap breaks the
+* contract at the top of the legal range — 2^26 attempts vs difficulty 26-28
+* means a legitimate gate is refused 37-78% of the time (expected work is
+* 2^d). Difficulty is already range-checked by agentGateOf (≤28), so the
+* budget is ≤ 2^32 — slow by the owner's own choice, never an infinite hang.
+*/
+function powAttemptBudget(difficulty) {
+	return 2 ** (difficulty + 4);
+}
+/**
 * Grind a Join rumor until its id carries the required PoW. The send time
 * stays fresh; a NIP-13 `nonce` tag (with the committed difficulty) varies.
 */
@@ -8902,7 +8913,7 @@ function grindJoinRumor(pubkey, ms, difficulty, attribution) {
 		baseTags.push(tag);
 	}
 	for (let counter = 0;; counter++) {
-		if (counter > 1 << 26) throw new Error(`proof-of-work grind exceeded safety cap at difficulty ${difficulty}`);
+		if (counter > powAttemptBudget(difficulty)) throw new Error(`proof-of-work grind exhausted the attempt budget at difficulty ${difficulty}`);
 		const rumor = buildRumor({
 			kind: KIND_JOIN_LEAVE,
 			content: "join",
