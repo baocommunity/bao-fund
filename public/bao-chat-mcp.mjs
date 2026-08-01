@@ -34262,6 +34262,7 @@ function resolveClaims(messages, opts) {
 	for (const { id, author, ms, msg } of sorted) {
 		if (delivered.has(id)) continue;
 		delivered.add(id);
+		if (ms - opts.nowMs > 9e5) continue;
 		const cur = states.get(msg.taskId);
 		switch (msg.verb) {
 			case "CLAIM": {
