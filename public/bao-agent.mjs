@@ -10654,6 +10654,30 @@ async function joinBao(name, inviteUrl) {
 	};
 	const rumor = gate ? grindJoinRumor(pubkey, Date.now(), gate.difficulty, attribution) : buildJoinRumor(pubkey, Date.now(), attribution);
 	await publishAll(community.relays, await sealGuestbook(rumor, currentGuestbookGroup(community), signer), gate ? `guestbook join (pow ≥ ${gate.difficulty})` : "guestbook join");
+	if (bundle.max_uses === 1) {
+		const gb = currentGuestbookGroup(community);
+		const myMs = resolveMs(rumor.created_at, rumor.tags);
+		const earlierJoinWins = async () => {
+			const rival = openGuestbookOpened(openGuestbookWraps(await queryAll(community.relays, {
+				kinds: [KIND_WRAP],
+				authors: [gb.pk]
+			}), [gb])).filter((ev) => joinCommitmentOf(ev) === commitment).map((ev) => ({
+				ms: ev.ms,
+				id: ev.rumorId
+			})).sort((a, b) => a.ms - b.ms || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))[0];
+			return rival !== void 0 && (rival.ms < myMs || rival.ms === myMs && rival.id < rumor.id);
+		};
+		let lost = await earlierJoinWins();
+		if (!lost) {
+			await new Promise((r) => setTimeout(r, 1500));
+			lost = await earlierJoinWins();
+		}
+		if (lost) {
+			console.error("  ✗ That single-use link was spent by a CONCURRENT join (earlier Join on the guestbook) — you are NOT a member. Ask for a fresh link.");
+			process.exitCode = 2;
+			return;
+		}
+	}
 	saveState(name, {
 		sk: bytesToHex$1(sk),
 		role: "member",
