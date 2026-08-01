@@ -10610,12 +10610,15 @@ async function joinBao(name, inviteUrl) {
 	if (existsSync(statePath(name))) throw new Error(`Identity "${name}" already exists — use say/read.`);
 	const parsed = parseInviteLink(inviteUrl.trim());
 	if (!parsed) throw new Error("Not a recognizable invite link.");
-	const newest = (await queryAll(parsed.bootstrapRelays, {
+	const events = await queryAll(parsed.bootstrapRelays, {
 		kinds: [KIND_INVITE_BUNDLE],
 		authors: [parsed.linkSigner],
-		"#d": [""],
-		limit: 1
-	})).sort((a, b) => b.created_at - a.created_at)[0];
+		"#d": [""]
+	});
+	const ts = (e) => e.created_at;
+	const maxTs = events.reduce((m, e) => Math.max(m, ts(e)), 0);
+	const atMax = events.filter((e) => ts(e) === maxTs);
+	const newest = atMax.find((e) => e.tags.some((t) => t[0] === "vsk" && t[1] === "9")) ?? atMax[0];
 	if (!newest) throw new Error("Couldn't find that invite on its relays.");
 	const bundle = parseBundleEvent(newest, parsed.linkSigner, parsed.token, Date.now());
 	const sk = generateSecretKey();
