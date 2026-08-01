@@ -214,15 +214,15 @@ export function BaoFundingPage() {
 
         <TabsContent value="campaigns" className="space-y-4 mt-4">
           {/* DEMO banner — scoped to the Campaigns tab */}
-          <div className="rounded-lg border-2 border-dashed border-amber-500/70 bg-amber-500/10 px-4 py-3 text-sm">
-            <p className="font-semibold text-[var(--2140-warning)] flex items-center gap-1.5">
-              <Sparkles className="size-4" /> DEMO — do NOT send real sats to campaigns or milestones
+          <div className="rounded-lg border border-border bg-muted/40 px-4 py-3 text-sm">
+            <p className="font-semibold flex items-center gap-1.5">
+              <Sparkles className="size-4 text-muted-foreground" /> DEMO — do NOT send real sats to campaigns or milestones
             </p>
             <p className="text-muted-foreground mt-0.5">
               Every settlement rail is in demo: contributions are only RECORDED by the bao.markets demo API (<code className="text-xs">{baoApiBase()}</code>), never paid out. Any address or invoice shown here is a demo artifact — <span className="font-medium text-foreground">real sats sent to it are lost and cannot be recovered</span>. Zaps or tokens sent to campaign pubkeys do not fund milestones. The Compute credits tab is the only real-sats feature.
             </p>
             <div className="mt-2 rounded-md bg-background/60 px-3 py-2">
-              <p className="font-medium text-[var(--2140-warning)]">How to get demo sats for testing</p>
+              <p className="font-medium">How to get demo sats for testing</p>
               <ol className="list-decimal pl-4 mt-1 space-y-0.5 text-muted-foreground text-xs">
                 <li>Creating a campaign or market is <span className="text-foreground font-medium">free</span> — no sats needed (anti-spam is rate limits, not fees).</li>
                 <li>
